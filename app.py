@@ -249,7 +249,7 @@ def verify_and_migrate_db():
 # Run Migration Guard
 verify_and_migrate_db()
 
-ADMIN_PASSCODE = "admin123"
+ADMIN_PASSCODE = "Shawon2026@secure123"
 
 # CSS Styling - High Contrast Theme with Bold Black Text
 st.markdown("""
