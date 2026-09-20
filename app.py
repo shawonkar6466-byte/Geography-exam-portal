@@ -242,6 +242,25 @@ def verify_and_migrate_db():
     """)
 
     cursor.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('portal_url', 'http://localhost:8501')")
+    
+    # ============================================================
+    # NEW: Insert Default Exam & 6 WBBSE Chapters (if DB is empty)
+    # ============================================================
+    cursor.execute("INSERT OR IGNORE INTO exams (id, name, description) VALUES (1, 'Madhyamik Class 10', 'WBBSE Class 10 Geography & Environment')")
+    
+    cursor.execute("SELECT COUNT(*) FROM topics")
+    topic_count = cursor.fetchone()[0]
+    if topic_count == 0:
+        default_topics = [
+            "১. বহির্জাত প্রক্রিয়া ও তাদের দ্বারা সৃষ্ট ভূমিরূপ / Exogenic Processes and Created Landforms",
+            "২. বায়ুমণ্ডল / Atmosphere",
+            "৩. বারিমণ্ডল / Hydrosphere",
+            "৪. বর্জ্য ব্যবস্থাপনা / Waste Management",
+            "৫. ভারত / India",
+            "৬. উপগ্রহ চিত্র ও ভূ-বৈচিত্র্যসূচক মানচিত্র / Satellite Imagery and Topographical Maps"
+        ]
+        for t_name in default_topics:
+            cursor.execute("INSERT INTO topics (exam_id, name) VALUES (1, ?)", (t_name,))
 
     conn.commit()
     conn.close()
