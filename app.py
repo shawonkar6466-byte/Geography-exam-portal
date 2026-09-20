@@ -77,14 +77,15 @@ def normalize_bengali_text(text):
     text = unicodedata.normalize('NFC', text)
     
     # 2. Fix e-kar (\u09C7) / ai-kar (\u09C8) visual vs logical placement
-    text = re.sub(r'\u09C7([\u0985-\u09B9](\u09CD[\u0985-\u09B9])?)', r'\1\u09C7', text)
-    text = re.sub(r'\u09C8([\u0985-\u09B9](\u09CD[\u0985-\u09B9])?)', r'\1\u09C8', text)
+    # Using lambda to avoid Python 3.12+ escape errors
+    text = re.sub(r'\u09C7([\u0985-\u09B9](\u09CD[\u0985-\u09B9])?)', lambda m: m.group(1) + '\u09C7', text)
+    text = re.sub(r'\u09C8([\u0985-\u09B9](\u09CD[\u0985-\u09B9])?)', lambda m: m.group(1) + '\u09C8', text)
     
     # 3. Clean zero-width characters and strange spaces
     text = re.sub(r'[\u200B\u200C\u200D]', '', text)
     text = re.sub(r'[ \t]+', ' ', text)
     return text.strip()
-
+    
 # Multi-Engine PDF Text Extraction
 def extract_text_from_pdf_file(file_obj):
     extracted = ""
