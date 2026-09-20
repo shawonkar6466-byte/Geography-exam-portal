@@ -216,7 +216,7 @@ def verify_and_migrate_db():
 
 verify_and_migrate_db()
 
-ADMIN_PASSCODE = "admin123"
+ADMIN_PASSCODE = "Shawon2026@123SUKANNYA"
 
 # ============================================================================
 # CSS
