@@ -470,8 +470,8 @@ if not st.session_state.logged_in:
         if ref_default:
             st.success(f"🎁 Referral Code Auto-Detected: `{ref_default}`")
         ref_input = st.text_input("Referral Code (Optional)", value=ref_default, key="s_ref")
-        if st.button("Submit Registration", use_container_width=True):
-            if s_name and s_school and s_phone and s_pass:
+        if st.button("Submit Registration", use_container_width=True, key="teacher_reg_submit_btn"):
+            if t_name and t_school and t_phone and t_pass:
                 try:
                     conn = get_connection()
                     cursor = conn.cursor()
@@ -501,8 +501,8 @@ if not st.session_state.logged_in:
         if t_ref_default:
             st.success(f"🎁 Referral Code Auto-Detected: `{t_ref_default}`")
         t_ref_in = st.text_input("Referral Code (Optional)", value=t_ref_default, key="t_ref")
-        if st.button("Submit Registration", use_container_width=True):
-            if t_name and t_school and t_phone and t_pass:
+        if st.button("Submit Registration", use_container_width=True, key="student_reg_submit_btn"):
+            if s_name and s_school and s_phone and s_pass:
                 try:
                     conn = get_connection()
                     cursor = conn.cursor()
