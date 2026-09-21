@@ -3,7 +3,6 @@ import sqlite3
 import os
 import io
 import re
-import json
 import urllib.request
 import urllib.parse
 import unicodedata
@@ -37,12 +36,104 @@ except ImportError:
 DB_NAME = "geography_exam.db"
 
 st.set_page_config(
-    page_title="WBBSE Geography Learning & Exam Portal",
+    page_title="WBBSE Geography Portal",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+# ============================================================================
+# OFFLINE BENGALI→ENGLISH DICTIONARY (Instant, No API)
+# ============================================================================
+BN_EN_DICT = {
+    # Question words
+    "কোনটি": "Which one", "কোন": "Which", "কে": "Who", "কি": "What", "কী": "What",
+    "কেন": "Why", "কোথায়": "Where", "কখন": "When", "কিভাবে": "How", "কত": "How many",
+    "সর্বপ্রথম": "First", "সর্বপ্রধান": "Most important", "প্রধান": "Main", "মূল": "Main",
+    "নাম": "Name", "নাম কি": "What is the name", "কি নামে পরিচিত": "known as",
+    "উদাহরণ": "Example", "বিশেষ": "Special", "ভিন্ন": "Different", "একই": "Same",
+    # Geography terms
+    "ভূগোল": "Geography", "ভূবিজ্ঞান": "Geology", "ভূগর্ভ": "Underground",
+    "ভূমিরূপ": "Landform", "ভূমিকম্প": "Earthquake", "সুনামি": "Tsunami",
+    "বহির্জাত": "Exogenic", "অন্তর্জাত": "Endogenic", "প্রক্রিয়া": "Process",
+    "পর্যায়ন": "Gradation", "অবক্ষয়": "Weathering", "ক্ষয়": "Erosion",
+    "নদী": "River", "নদ": "River", "বদ্বীপ": "Delta", "জলপ্রপাত": "Waterfall",
+    "হিমবাহ": "Glacier", "হিম": "Ice", "বায়ু": "Wind", "বাতাস": "Wind",
+    "সমুদ্র": "Sea", "সাগর": "Sea", "মহাসাগর": "Ocean", "উপকূল": "Coast",
+    "পাহাড়": "Mountain", "পর্বত": "Mountain", "মালভূমি": "Plateau",
+    "সমভূমি": "Plain", "উপত্যকা": "Valley", "গিরিখাত": "Canyon",
+    "বায়ুমণ্ডল": "Atmosphere", "বারিমণ্ডল": "Hydrosphere", "জীবমণ্ডল": "Biosphere",
+    "স্থলমণ্ডল": "Lithosphere", "জলবায়ু": "Climate", "আবহাওয়া": "Weather",
+    "তাপমাত্রা": "Temperature", "বৃষ্টিপাত": "Rainfall", "চাপ": "Pressure",
+    "বায়ুপ্রবাহ": "Wind flow", "মৌসুমি": "Monsoon", "বর্ষা": "Monsoon",
+    "শীত": "Winter", "গ্রীষ্ম": "Summer", "গ্রীষ্মকাল": "Summer season",
+    "আর্দ্রতা": "Humidity", "বাষ্পীভবন": "Evaporation", "ঘনীভবন": "Condensation",
+    "বর্জ্য": "Waste", "ব্যবস্থাপনা": "Management", "আবর্জনা": "Garbage",
+    "দূষণ": "Pollution", "পরিবেশ": "Environment", "পরিস্থিতি": "Situation",
+    "ভারত": "India", "বাংলাদেশ": "Bangladesh", "পশ্চিমবঙ্গ": "West Bengal",
+    "কলকাতা": "Kolkata", "দিল্লি": "Delhi", "মুম্বাই": "Mumbai",
+    "হিমালয়": "Himalaya", "গঙ্গা": "Ganga", "ব্রহ্মপুত্র": "Brahmaputra",
+    "সতলুজ": "Sutlej", "যমুনা": "Yamuna", "দামোদর": "Damodar",
+    "উপগ্রহ": "Satellite", "চিত্র": "Image", "মানচিত্র": "Map",
+    "ভূ-বৈচিত্র্যসূচক": "Topographical", "টোপোগ্রাফিক্যাল": "Topographical",
+    "স্কেল": "Scale", "দিক": "Direction", "উচ্চতা": "Height", "গভীরতা": "Depth",
+    "অক্ষরেখা": "Latitude", "দ্রাঘিমারেখা": "Longitude", "নিরক্ষরেখা": "Equator",
+    "মেরু": "Pole", "উত্তর": "North", "দক্ষিণ": "South", "পূর্ব": "East", "পশ্চিম": "West",
+    # Adjectives/Adverbs
+    "প্রথম": "First", "দ্বিতীয়": "Second", "তৃতীয়": "Third", "শেষ": "Last",
+    "বড়": "Big", "ছোট": "Small", "উচ্চ": "High", "নিচু": "Low",
+    "নতুন": "New", "পুরনো": "Old", "সর্বোচ্চ": "Highest", "সর্বনিম্ন": "Lowest",
+    "সঠিক": "Correct", "ভুল": "Wrong", "সম্পূর্ণ": "Complete", "অসম্পূর্ণ": "Incomplete",
+    "প্রাকৃতিক": "Natural", "কৃত্রিম": "Artificial", "মানবসৃষ্ট": "Man-made",
+    "জীব": "Living", "প্রাণী": "Animal", "উদ্ভিদ": "Plant", "মানুষ": "Human",
+    # Prepositions/Connectors
+    "থেকে": "from", "দ্বারা": "by", "জন্য": "for", "সাথে": "with", "মধ্যে": "in",
+    "উপর": "on", "নিচে": "below", "পরে": "after", "আগে": "before",
+    "এবং": "and", "বা": "or", "কিন্তু": "but", "তবে": "however",
+    # Common phrases
+    "নিচের কোনটি": "Which of the following", "নিম্নলিখিত": "Following",
+    "ব্যাখ্যা করুন": "Explain", "বর্ণনা করুন": "Describe",
+    "সংক্ষেপে": "Briefly", "উদাহরণ দিন": "Give example",
+    "এর প্রভাব": "Its effect", "এর ফলে": "As a result of",
+    "ব্যবহার করেন": "used", "আবিষ্কার করেন": "discovered",
+    "প্রতিষ্ঠা করেন": "established", "গবেষণা": "Research",
+    "তত্ত্ব": "Theory", "সূত্র": "Formula", "নীতি": "Principle",
+    "শব্দটি": "The word", "শব্দ": "Word", "অর্থ": "Meaning",
+    "প্রথম কে": "Who first", "কার": "Whose", "কোথায় অবস্থিত": "located at",
+}
+
+def translate_geo_simple(bn_text):
+    """Fast offline Bengali→English translation using dictionary + term replacement"""
+    if not bn_text:
+        return ""
+    if not isinstance(bn_text, str):
+        return str(bn_text)
+    
+    # If no Bengali chars, return as-is
+    bn_count = sum(1 for c in bn_text if '\u0980' <= c <= '\u09FF')
+    if bn_count < 2:
+        return bn_text
+    
+    result = bn_text
+    # Longest-match first (to avoid partial replacements)
+    sorted_keys = sorted(BN_EN_DICT.keys(), key=len, reverse=True)
+    for bn in sorted_keys:
+        if bn in result:
+            result = result.replace(bn, " " + BN_EN_DICT[bn] + " ")
+    
+    # Cleanup multiple spaces
+    result = re.sub(r'\s+', ' ', result).strip()
+    
+    # If still heavily Bengali, mark
+    remaining_bn = sum(1 for c in result if '\u0980' <= c <= '\u09FF')
+    if remaining_bn > 3:
+        # Return original with translation note
+        return f"[EN] {result}"
+    return result
+
+# ============================================================================
+# HELPERS
+# ============================================================================
 def get_connection():
     try:
         os.makedirs(os.path.dirname(DB_NAME), exist_ok=True)
@@ -195,7 +286,7 @@ def verify_and_migrate_db():
     cursor.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('upi_id', 'shawonkar6466-1@oksbi')")
     cursor.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('full_access_price', '100')")
     
-    cursor.execute("INSERT OR IGNORE INTO exams (id, name, description) VALUES (1, 'Madhyamik Class 10', 'WBBSE Class 10 Geography & Environment')")
+    cursor.execute("INSERT OR IGNORE INTO exams (id, name, description) VALUES (1, 'Madhyamik Class 10', 'WBBSE Class 10 Geography')")
     cursor.execute("SELECT COUNT(*) FROM topics")
     if cursor.fetchone()[0] == 0:
         default_topics = [
@@ -217,65 +308,27 @@ verify_and_migrate_db()
 ADMIN_PASSCODE = "admin123"
 
 # ============================================================================
-# 🌐 LANGUAGE / TRANSLATION
+# LANGUAGE / TRANSLATION
 # ============================================================================
 def T(bn, en):
     lang = st.session_state.get('language', 'Bengali')
     return bn if lang == "Bengali" else en
 
-def translate_geo_term(text, target_lang):
-    if not text:
-        return ""
-    if target_lang == "English":
-        res = text
-        GEO_TRANS_DICT = {
-            "বহির্জাত প্রক্রিয়া": "Exogenic Processes", "ভূমিরূপ": "Landforms",
-            "বায়ুমণ্ডল": "Atmosphere", "বারিমণ্ডল": "Hydrosphere",
-            "বর্জ্য ব্যবস্থাপনা": "Waste Management", "ভারত": "India",
-            "উপগ্রহ চিত্র": "Satellite Imagery", "ভূ-বৈচিত্র্যসূচক মানচিত্র": "Topographical Maps",
-        }
-        for bn, en in GEO_TRANS_DICT.items():
-            res = res.replace(bn, en)
-        return res
-    return text
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def translate_bn_to_en(text):
-    """Google Translate free API — Bengali to English"""
-    if not text or not isinstance(text, str):
-        return text or ""
-    # Check if Bengali characters exist
-    bengali_chars = sum(1 for c in text if '\u0980' <= c <= '\u09FF')
-    if bengali_chars < 2:
-        return text  # Already English
-    try:
-        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=bn&tl=en&dt=t&q={urllib.parse.quote(text)}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = resp.read().decode('utf-8')
-            result = json.loads(data)
-            translated = ''.join([item[0] for item in result[0] if item and item[0]])
-            return translated.strip() if translated.strip() else text
-    except Exception:
-        return text
-
-def get_q_text(q_bn, q_en):
-    """Return question text based on language, with auto-translation"""
+def get_q_text(bn_text, en_text):
+    """Return question text — fast, no API calls"""
     lang = st.session_state.get('language', 'Bengali')
     if lang == "Bengali":
-        return q_bn or q_en or ""
+        return bn_text or en_text or ""
     # English mode
-    if q_en and q_en.strip() and q_en != q_bn:
-        # If stored English text has Bengali chars, still translate
-        if sum(1 for c in q_en if '\u0980' <= c <= '\u09FF') > 2:
-            return translate_bn_to_en(q_en)
-        return q_en
-    if q_bn:
-        return translate_bn_to_en(q_bn)
+    if en_text and en_text.strip():
+        return en_text
+    if bn_text:
+        # Use offline dictionary
+        return translate_geo_simple(bn_text)
     return ""
 
 # ============================================================================
-# ⚡ CACHED FUNCTIONS
+# CACHED FUNCTIONS
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def cached_topics():
@@ -297,11 +350,22 @@ def cached_has_purchase(username, item_type, item_id):
     conn.close()
     return cnt > 0
 
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_questions_for_topic(topic_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""SELECT id, question_text, question_text_en, option_a, option_a_en, option_b, option_b_en,
+        option_c, option_c_en, option_d, option_d_en, correct_option, explanation, explanation_en,
+        difficulty, is_descriptive, marks, model_answer, model_answer_en, marking_scheme, marking_scheme_en, q_type
+        FROM questions WHERE topic_id = ?""", (topic_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
 # ============================================================================
-# 🧠 SMART MCQ PARSER
+# SMART MCQ PARSER
 # ============================================================================
 def smart_parse_mcq_text(text):
-    """Parse Bengali/English MCQ text with options + answer + explanation"""
     text = normalize_bengali_text(text)
     lines = text.split('\n')
     
@@ -359,7 +423,6 @@ def smart_parse_mcq_text(text):
     return questions
 
 def detect_mcq_format(text):
-    """Check if text contains Bengali MCQ option format"""
     return bool(re.search(r'^[\(\[]?\s*[কখঘগ]\s*[\)\]]', text, re.MULTILINE))
 
 def parse_and_categorize_questions(content_text):
@@ -382,7 +445,7 @@ def parse_and_categorize_questions(content_text):
             current_q = {
                 "question": normalize_bengali_text(q_txt), "marks": m_val,
                 "opt_a": "", "opt_b": "", "opt_c": "", "opt_d": "",
-                "correct": "A", "explanation": "Extracted.",
+                "correct": "A", "explanation": "",
                 "is_descriptive": 1 if m_val > 1 else 0
             }
         elif current_q:
@@ -475,61 +538,39 @@ except Exception:
 # ============================================================================
 st.markdown("""
     <style>
-    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"],
-    [data-testid="stToolbar"], [data-testid="stDecoration"],
-    .main, .block-container, section.main, div[role="main"] {
+    .stApp, [data-testid="stAppViewContainer"], .main, .block-container {
         background-color: #f1f5f9 !important; color: #0f172a !important;
     }
     [data-testid="stSidebar"], [data-testid="stSidebar"] > div {
-        background-color: #ffffff !important; color: #0f172a !important;
+        background-color: #ffffff !important;
     }
     [data-testid="stSidebar"] * { color: #0f172a !important; }
     h1, h2, h3, h4, h5, h6, p, span, label, div, small, strong, em,
-    .stMarkdown, .stMarkdown *, [data-testid="stMarkdownContainer"],
-    [data-testid="stMarkdownContainer"] * { color: #0f172a !important; }
+    .stMarkdown, .stMarkdown * { color: #0f172a !important; }
     .stTextInput input, .stTextArea textarea, .stSelectbox select,
     .stNumberInput input, input, textarea, select {
         background-color: #ffffff !important; color: #0f172a !important;
         border: 1.5px solid #475569 !important; border-radius: 8px !important;
         font-weight: 600 !important;
     }
-    input::placeholder, textarea::placeholder { color: #94a3b8 !important; }
-    [data-baseweb="popover"], [data-baseweb="menu"], [role="listbox"],
-    [role="option"] { background-color: #ffffff !important; color: #0f172a !important; }
-    [role="option"]:hover { background-color: #eff6ff !important; }
-    .stRadio label, .stRadio div, [data-testid="stRadio"] * { color: #0f172a !important; }
-    [data-testid="stExpander"] summary {
-        background-color: #f8fafc !important; color: #0f172a !important; font-weight: 600 !important;
+    [data-baseweb="popover"], [data-baseweb="menu"], [role="listbox"], [role="option"] {
+        background-color: #ffffff !important; color: #0f172a !important;
     }
+    .stRadio label, .stRadio div { color: #0f172a !important; }
+    [data-testid="stExpander"] summary { background-color: #f8fafc !important; color: #0f172a !important; font-weight: 600 !important; }
     [data-testid="stExpander"] { background-color: #ffffff !important; border: 1.5px solid #cbd5e1 !important; border-radius: 10px !important; }
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: #e2e8f0 !important; border-radius: 10px; padding: 6px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background-color: transparent !important; color: #475569 !important;
-        font-weight: 600 !important; border-radius: 8px !important;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #ffffff !important; color: #1d4ed8 !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
+    .stTabs [data-baseweb="tab-list"] { background-color: #e2e8f0 !important; border-radius: 10px; padding: 6px; }
+    .stTabs [data-baseweb="tab"] { background-color: transparent !important; color: #475569 !important; font-weight: 600 !important; border-radius: 8px !important; }
+    .stTabs [aria-selected="true"] { background-color: #ffffff !important; color: #1d4ed8 !important; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
     .stButton > button, .stDownloadButton > button {
         background-color: #2563eb !important; color: #ffffff !important;
         border: none !important; border-radius: 8px !important;
         font-weight: 700 !important; padding: 10px 18px !important;
     }
-    .stButton > button:hover, .stDownloadButton > button:hover {
-        background-color: #1d4ed8 !important;
-    }
+    .stButton > button:hover { background-color: #1d4ed8 !important; }
     .stButton > button p, .stDownloadButton > button p { color: #ffffff !important; }
-    [data-testid="stForm"] {
-        background-color: #ffffff !important; border: 1.5px solid #cbd5e1 !important;
-        border-radius: 12px !important; padding: 20px !important;
-    }
-    [data-testid="stMetric"] {
-        background-color: #ffffff !important; padding: 16px !important;
-        border-radius: 12px !important; border: 1.5px solid #cbd5e1 !important;
-    }
+    [data-testid="stForm"] { background-color: #ffffff !important; border: 1.5px solid #cbd5e1 !important; border-radius: 12px !important; padding: 20px !important; }
+    [data-testid="stMetric"] { background-color: #ffffff !important; padding: 16px !important; border-radius: 12px !important; border: 1.5px solid #cbd5e1 !important; }
     [data-testid="stMetricValue"], [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * { color: #0f172a !important; }
     .stDataFrame, .stDataFrame * { color: #0f172a !important; }
     .stAlert, .stAlert * { color: #0f172a !important; }
@@ -537,16 +578,14 @@ st.markdown("""
     .header-box {
         background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0284c7 100%);
         padding: 28px; border-radius: 16px; color: #ffffff !important;
-        text-align: center; margin-bottom: 25px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        text-align: center; margin-bottom: 25px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);
     }
-    .header-box h1 { color: #ffffff !important; font-size: 2.1rem !important; font-weight: 700 !important; }
-    .header-box p { color: #e0e7ff !important; }
+    .header-box h1 { color: #ffffff !important; font-size: 2rem !important; font-weight: 700 !important; margin: 0; }
+    .header-box p { color: #e0e7ff !important; margin-top: 8px; }
     
     .card-short {
         background-color: #ffffff !important; color: #000000 !important;
-        padding: 22px; border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        padding: 22px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
         border-left: 6px solid #2563eb; margin-bottom: 18px;
         border-top: 1.5px solid #cbd5e1; border-right: 1.5px solid #cbd5e1; border-bottom: 1.5px solid #cbd5e1;
     }
@@ -554,8 +593,7 @@ st.markdown("""
     
     .card-broad {
         background-color: #ffffff !important; color: #000000 !important;
-        padding: 22px; border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        padding: 22px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
         border-left: 6px solid #7c3aed; margin-bottom: 18px;
         border-top: 1.5px solid #cbd5e1; border-right: 1.5px solid #cbd5e1; border-bottom: 1.5px solid #cbd5e1;
     }
@@ -585,7 +623,6 @@ st.markdown("""
         background-color: #0f172a; color: #f8fafc; padding: 28px;
         border-radius: 14px; text-align: center; margin-top: 50px;
         border-top: 5px solid #2563eb;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
     }
     .footer-block * { color: #f8fafc !important; }
     .footer-block h3 { color: #38bdf8 !important; }
@@ -593,18 +630,10 @@ st.markdown("""
     .lock-box { background: #fef3c7; border: 2px dashed #f59e0b; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 15px; }
     .lock-box * { color: #78350f !important; }
     
-    .ask-corner-card {
-        background: #ffffff; padding: 15px; border-radius: 10px;
-        border-left: 5px solid #16a34a; margin-bottom: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    }
+    .ask-corner-card { background: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #16a34a; margin-bottom: 12px; }
     .ask-corner-card * { color: #0f172a !important; }
     
-    .assigned-card {
-        background: linear-gradient(135deg, #fef3c7 0%, #fef9c3 100%);
-        padding: 18px; border-radius: 12px;
-        border-left: 5px solid #f59e0b; margin-bottom: 14px;
-    }
+    .assigned-card { background: linear-gradient(135deg, #fef3c7 0%, #fef9c3 100%); padding: 18px; border-radius: 12px; border-left: 5px solid #f59e0b; margin-bottom: 14px; }
     .assigned-card * { color: #78350f !important; }
     
     #MainMenu { visibility: hidden; }
@@ -629,8 +658,8 @@ if lang == "Bengali":
 else:
     st.markdown("""
         <div class="header-box">
-            <h1>🌍 West Bengal Board Geography Portal & Geo Lab</h1>
-            <p>Dedicated Practice Platform for WBBSE Class 10 Geography & Environment Syllabus</p>
+            <h1>🌍 West Bengal Board Geography Portal</h1>
+            <p>WBBSE Class 10 Geography & Environment — Official Syllabus Practice Hub</p>
         </div>""", unsafe_allow_html=True)
 
 # ============================================================================
@@ -693,7 +722,7 @@ if not st.session_state.logged_in:
         
         ref_default_s = st.session_state.get('referred_by', '')
         if ref_default_s:
-            st.success(f"🎁 {T('Referral Code Detected', 'Referral Code Detected')}: `{ref_default_s}`")
+            st.success(f"🎁 {T('Referral detected', 'Referral detected')}: `{ref_default_s}`")
         s_ref = st.text_input(T("Referral Code (Optional)", "Referral Code (Optional)"), value=ref_default_s, key="s_ref")
         
         if st.button(T("Submit Student Registration", "Submit Student Registration"), use_container_width=True, key="student_reg_submit_btn"):
@@ -714,7 +743,7 @@ if not st.session_state.logged_in:
                 except sqlite3.IntegrityError:
                     st.error(T("❌ Account exists.", "❌ Account already exists."))
             else:
-                st.error(T("⚠️ Fill all fields.", "⚠️ Please fill all required fields."))
+                st.error(T("⚠️ Fill all fields.", "⚠️ Fill all required fields."))
     
     with tab_teacher_reg:
         st.subheader(T("New Teacher Registration", "New Teacher Registration"))
@@ -726,7 +755,7 @@ if not st.session_state.logged_in:
         
         ref_default_t = st.session_state.get('referred_by', '')
         if ref_default_t:
-            st.success(f"🎁 {T('Referral Code Detected', 'Referral Code Detected')}: `{ref_default_t}`")
+            st.success(f"🎁 {T('Referral detected', 'Referral detected')}: `{ref_default_t}`")
         t_ref = st.text_input(T("Referral Code (Optional)", "Referral Code (Optional)"), value=ref_default_t, key="t_ref")
         
         if st.button(T("Submit Teacher Registration", "Submit Teacher Registration"), use_container_width=True, key="teacher_reg_submit_btn"):
@@ -747,7 +776,7 @@ if not st.session_state.logged_in:
                 except sqlite3.IntegrityError:
                     st.error(T("❌ Account exists.", "❌ Account already exists."))
             else:
-                st.error(T("⚠️ Fill all fields.", "⚠️ Please fill all required fields."))
+                st.error(T("⚠️ Fill all fields.", "⚠️ Fill all required fields."))
 
 else:
     # ========================================================================
@@ -905,7 +934,6 @@ else:
                     conn.commit()
                     conn.close()
                     st.success(T("🎉 Sent!", "🎉 Sent!"))
-                    st.balloons()
         
         st.markdown("---")
         conn = get_connection()
@@ -1035,23 +1063,20 @@ else:
     # ========================================================================
     elif active_view_role == "student":
         
-        # ---------- DASHBOARD ----------
         if st_nav == T("🏠 Dashboard", "🏠 Dashboard"):
             st.subheader(T("🏠 Student Dashboard", "🏠 Student Dashboard"))
+            is_full = has_full_access(st.session_state.username)
             
             colA, colB, colC = st.columns(3)
             colA.metric(T("📚 Chapters", "📚 Chapters"), "6")
+            colB.metric(T("👑 Full Access", "👑 Full Access"), T("Active", "Active") if is_full else T("Locked", "Locked"))
             
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM questions")
             total_q = cursor.fetchone()[0]
             conn.close()
-            
-            colB.metric(T("❓ Total Questions", "❓ Total Questions"), total_q)
-            
-            is_full = has_full_access(st.session_state.username)
-            colC.metric(T("👑 Full Access", "👑 Full Access"), T("Active", "Active") if is_full else T("Locked", "Locked"))
+            colC.metric(T("❓ Total Questions", "❓ Total Questions"), total_q)
             
             if is_full:
                 st.success(T("👑 আপনি Full Access User!", "👑 You have Full Access!"))
@@ -1059,36 +1084,27 @@ else:
                 st.info(T("💡 ₹100 দিয়ে Full Access কিনলে সব প্রশ্ন unlock হবে।", "💡 Buy Full Access for ₹100 to unlock all questions."))
             
             st.markdown("---")
-            st.markdown(f"### 🔥 {T('Featured Practice Questions', 'Featured Practice Questions')}")
+            st.markdown(f"### 🔥 {T('Featured Questions', 'Featured Questions')}")
             
             conn = get_connection()
             cursor = conn.cursor()
             topics = cached_topics()
-            
             for t_id, t_name in topics:
-                cursor.execute("""SELECT id, question_text, question_text_en, marks, is_descriptive, correct_option
-                    FROM questions WHERE topic_id = ? ORDER BY RANDOM() LIMIT 2""", (t_id,))
+                cursor.execute("""SELECT id, question_text, question_text_en, marks FROM questions WHERE topic_id = ? ORDER BY RANDOM() LIMIT 2""", (t_id,))
                 qs = cursor.fetchall()
-                
                 if qs:
                     st.markdown(f"#### 📖 {t_name}")
-                    for q_id, q_bn, q_en, q_m, is_desc, corr in qs:
+                    for q_id, q_bn, q_en, q_m in qs:
                         q_label = get_q_text(q_bn, q_en)
-                        unlocked = is_full or user_has_purchase(st.session_state.username, "QUESTION", q_id)
+                        unlocked = is_full
                         lock_icon = "🔓" if unlocked else "🔒"
-                        
                         with st.expander(f"{lock_icon} [{q_m}M] {q_label[:100]}..."):
                             st.markdown(f"**{T('Question', 'Question')}:** {q_label}")
                             if not unlocked and q_m > 1:
                                 st.warning(T("🔒 Full Access কিনুন (₹100)", "🔒 Buy Full Access (₹100)"))
-                            else:
-                                st.info(T("Practice Center এ বিস্তারিত", "See Practice Center for details"))
-                    st.markdown("---")
-            
             cursor.close()
             conn.close()
         
-        # ---------- PRACTICE CENTER ----------
         elif st_nav == T("📖 Practice Center", "📖 Practice Center"):
             st.subheader(T("📖 WBBSE Class 10 Geography Practice Center", "📖 WBBSE Class 10 Geography Practice Center"))
             
@@ -1100,19 +1116,11 @@ else:
             selected_topic_name = st.selectbox(T("Select Chapter:", "Select Chapter:"), list(topic_dict.keys()), key="std_topic_sel")
             target_t_id = topic_dict[selected_topic_name]
             
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""SELECT id, question_text, question_text_en, option_a, option_a_en, option_b, option_b_en,
-                option_c, option_c_en, option_d, option_d_en, correct_option, explanation, explanation_en,
-                difficulty, is_descriptive, marks, model_answer, model_answer_en, marking_scheme, marking_scheme_en, q_type
-                FROM questions WHERE topic_id = ?""", (target_t_id,))
-            all_questions = cursor.fetchall()
-            conn.close()
+            all_questions = cached_questions_for_topic(target_t_id)
             
             if not all_questions:
                 st.info(T("এই chapter এ প্রশ্ন নেই।", "No questions in this chapter yet."))
             else:
-                # Categorize by q_type (with fallback to marks)
                 def get_qtype(q):
                     if len(q) > 21 and q[21]:
                         return q[21]
@@ -1140,16 +1148,14 @@ else:
                     conn = get_connection()
                     cursor = conn.cursor()
                     cursor.execute("""SELECT status, teacher_answer FROM student_doubts 
-                        WHERE student_username = ? AND question_id = ? 
-                        ORDER BY id DESC LIMIT 1""",
+                        WHERE student_username = ? AND question_id = ? ORDER BY id DESC LIMIT 1""",
                         (st.session_state.username, q_id))
                     d_row = cursor.fetchone()
                     conn.close()
                     
                     if d_row and d_row[0] == "Approved" and d_row[1] and d_row[1].strip():
-                        answer_text = translate_bn_to_en(d_row[1]) if lang == "English" else d_row[1]
                         st.success(T("✅ Solution Unlocked!", "✅ Solution Unlocked!"))
-                        st.markdown(f"**{T('Model Answer', 'Model Answer')}:**\n\n{answer_text}")
+                        st.markdown(f"**{T('Model Answer', 'Model Answer')}:**\n\n{d_row[1]}")
                         st.download_button(T("📥 Download", "📥 Download"), data=d_row[1], file_name=f"Solution_Q{q_id}.txt", key=f"dl_{q_id}")
                     elif d_row and d_row[0] in ["Pending Admin Assignment", "Assigned to Teacher", "Teacher Submitted (Pending Admin Approval)"]:
                         st.info(f"⏳ {T('Status', 'Status')}: `{d_row[0]}`")
@@ -1169,11 +1175,10 @@ else:
                                     VALUES (?, ?, ?, 'Pending Admin Assignment')""",
                                     (st.session_state.username, st.session_state.full_name, q_id))
                                 conn.commit()
-                                st.success(T("🎉 Request sent!", "🎉 Request sent!"))
+                                st.success(T("🎉 Sent!", "🎉 Sent!"))
                                 st.rerun()
                             conn.close()
                 
-                # MCQ TAB
                 with t_mcq:
                     if not mcq_list:
                         st.info(T("No MCQs.", "No MCQs."))
@@ -1186,14 +1191,11 @@ else:
                                 <span style="background-color: #2563eb; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">MCQ</span>
                                 <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
                             
-                            def opt_text(bn, en):
-                                return get_q_text(bn, en) if (bn or en) else ""
-                            
                             opts = [
-                                f"A) {opt_text(oa_bn, oa_en)}",
-                                f"B) {opt_text(ob_bn, ob_en)}",
-                                f"C) {opt_text(oc_bn, oc_en)}",
-                                f"D) {opt_text(od_bn, od_en)}"
+                                f"A) {get_q_text(oa_bn, oa_en)}",
+                                f"B) {get_q_text(ob_bn, ob_en)}",
+                                f"C) {get_q_text(oc_bn, oc_en)}",
+                                f"D) {get_q_text(od_bn, od_en)}"
                             ]
                             user_ans = st.radio(T(f"Select Q{idx}:", f"Select Q{idx}:"), opts, index=None, key=f"std_mcq_{q_id}")
                             if user_ans:
@@ -1206,7 +1208,6 @@ else:
                                     st.info(f"💡 {exp_text}")
                             st.markdown("<hr/>", unsafe_allow_html=True)
                 
-                # SAQ TAB
                 with t_saq:
                     if not saq_list:
                         st.info(T("No SAQs.", "No SAQs."))
@@ -1219,12 +1220,11 @@ else:
                                 <span style="background-color: #059669; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">SAQ</span>
                                 <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
                             with st.expander(T("👁️ View Answer", "👁️ View Answer")):
-                                st.markdown(f"**{T('Answer', 'Answer')}:** {get_q_text(corr_opt, corr_opt)}")
+                                st.markdown(f"**{T('Answer', 'Answer')}:** {corr_opt}")
                                 if expl_bn or expl_en:
                                     st.markdown(f"**{T('Explanation', 'Explanation')}:** {get_q_text(expl_bn, expl_en)}")
                             st.markdown("<hr/>", unsafe_allow_html=True)
                 
-                # 2 MARKS
                 with t2:
                     if not q2_list:
                         st.info(T("No 2M.", "No 2M."))
@@ -1239,7 +1239,6 @@ else:
                             render_ask_button(q_id, idx)
                             st.markdown("<hr/>", unsafe_allow_html=True)
                 
-                # 3 MARKS
                 with t3:
                     if not q3_list:
                         st.info(T("No 3M.", "No 3M."))
@@ -1254,7 +1253,6 @@ else:
                             render_ask_button(q_id, idx)
                             st.markdown("<hr/>", unsafe_allow_html=True)
                 
-                # 5 MARKS
                 with t5:
                     if not q5_list:
                         st.info(T("No 5M.", "No 5M."))
@@ -1287,8 +1285,7 @@ else:
                     with st.expander(f"{color} #{d_id} [{q_m}M] — {status}"):
                         st.markdown(f"**{T('Question', 'Question')}:** {q_label}")
                         if status == "Approved" and t_ans and t_ans.strip():
-                            answer_shown = translate_bn_to_en(t_ans) if lang == "English" else t_ans
-                            st.success(f"✅ {answer_shown}")
+                            st.success(f"✅ {t_ans}")
                             st.download_button(T("📥 Download", "📥 Download"), data=t_ans, file_name=f"Doubt_{d_id}.txt", key=f"d_{d_id}")
                         else:
                             st.info(f"⏳ Status: {status}")
@@ -1312,9 +1309,7 @@ else:
                         if f_data:
                             st.download_button(f"📥 {c_num}", data=f_data, file_name=f_name, key=f"dl_{m_id}")
                     else:
-                        st.markdown(f"""<div class="lock-box">
-                            🔒 {T(f'₹{price or 0} payment unlock করুন।', f'Pay ₹{price or 0} to unlock.')}
-                        </div>""", unsafe_allow_html=True)
+                        st.markdown(f"""<div class="lock-box">🔒 {T(f'₹{price or 0} payment unlock করুন।', f'Pay ₹{price or 0} to unlock.')}</div>""", unsafe_allow_html=True)
                     st.markdown("---")
         
         elif st_nav == T("📝 My Exam Submissions", "📝 My Exam Submissions"):
@@ -1346,7 +1341,6 @@ else:
                         conn.commit()
                         conn.close()
                         st.success(T("🎉 Submitted!", "🎉 Submitted!"))
-                        st.balloons()
             
             st.markdown("---")
             conn = get_connection()
@@ -1420,7 +1414,8 @@ else:
             
             with tab_man:
                 st.markdown(T("### ➕ Manual Upload", "### ➕ Manual Upload"))
-                q_text_bn = st.text_area(T("Question:", "Question:"), key="tch_q_bn")
+                q_text_bn = st.text_area(T("Question (Bengali):", "Question (Bengali):"), key="tch_q_bn")
+                q_en_manual = st.text_input(T("English Translation (Optional):", "English Translation (Optional):"), key="tch_q_en")
                 q_type_choice = st.selectbox(T("Type:", "Type:"), [
                     "MCQ (1 Mark)", "SAQ (1 Mark)", "2 Marks", "3 Marks", "5 Marks"
                 ], key="tch_q_type_sel")
@@ -1428,6 +1423,7 @@ else:
                 q_marks = type_marks_map[q_type_choice]
                 is_mcq = q_type_choice.startswith("MCQ")
                 is_saq = q_type_choice.startswith("SAQ")
+                q_en_final = q_en_manual.strip() if q_en_manual.strip() else translate_geo_simple(q_text_bn)
                 
                 if q_text_bn.strip():
                     match, ratio = check_duplicate_question(q_text_bn, target_t_id)
@@ -1447,7 +1443,7 @@ else:
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', 0, 1, 'MCQ')""",
-                                (target_t_id, q_text_bn, translate_bn_to_en(q_text_bn), oa, ob, oc, od, co, ex))
+                                (target_t_id, q_text_bn, q_en_final, oa, ob, oc, od, co, ex))
                             conn.commit(); conn.close()
                             st.cache_data.clear()
                             st.success("✅ Added!"); st.rerun()
@@ -1459,7 +1455,7 @@ else:
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
                                 VALUES (?, ?, ?, ?, ?, 'Medium', 0, 1, 'SAQ')""",
-                                (target_t_id, q_text_bn, translate_bn_to_en(q_text_bn), saq_ans, saq_ex))
+                                (target_t_id, q_text_bn, q_en_final, saq_ans, saq_ex))
                             conn.commit(); conn.close()
                             st.cache_data.clear()
                             st.success("✅ Added!"); st.rerun()
@@ -1471,7 +1467,7 @@ else:
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
                                 VALUES (?, ?, ?, 'Hard', 1, ?, ?, ?, 'Broad')""",
-                                (target_t_id, q_text_bn, translate_bn_to_en(q_text_bn), q_marks, ma, ms))
+                                (target_t_id, q_text_bn, q_en_final, q_marks, ma, ms))
                             conn.commit(); conn.close()
                             st.cache_data.clear()
                             st.success("✅ Added!"); st.rerun()
@@ -1482,9 +1478,7 @@ else:
                     conn = get_connection(); cursor = conn.cursor()
                     cursor.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = ? ORDER BY id ASC", (target_t_id,))
                     all_q = cursor.fetchall(); conn.close()
-                    if len(all_q) < 2:
-                        st.warning(T("Need 2+ questions.", "Need 2+ questions."))
-                    else:
+                    if len(all_q) >= 2:
                         import difflib
                         groups = []; processed = set()
                         for i in range(len(all_q)):
@@ -1503,15 +1497,13 @@ else:
                         else:
                             st.warning(f"⚠️ {len(groups)} Groups!")
                             for gi, grp in enumerate(groups, 1):
-                                st.markdown(f"#### Group #{gi}")
-                                keep = st.radio(T("Keep?", "Keep?"), [q[0] for q in grp],
+                                keep = st.radio(f"G#{gi}", [q[0] for q in grp],
                                     format_func=lambda x: next(f"#{q[0]} [{q[2]}M]: {q[1][:80]}" for q in grp if q[0] == x),
                                     key=f"k_{gi}_tch")
                                 for q in grp:
                                     cA, cB = st.columns([5, 1])
                                     color = "#16a34a" if q[0] == keep else "#dc2626"
-                                    prefix = "✅ KEEP" if q[0] == keep else "❌ DUP"
-                                    cA.markdown(f"<span style='color:{color};font-weight:bold;'>{prefix}</span> #{q[0]}")
+                                    cA.markdown(f"<span style='color:{color};font-weight:bold;'>{'✅' if q[0] == keep else '❌'}</span> #{q[0]}")
                                     if q[0] != keep and cB.button(f"🗑️ #{q[0]}", key=f"d_{q[0]}_tch"):
                                         conn = get_connection(); cursor = conn.cursor()
                                         cursor.execute("INSERT INTO duplicate_log (original_q_id, duplicate_q_id, similarity, removed_by) VALUES (?, ?, ?, ?)",
@@ -1520,7 +1512,6 @@ else:
                                         conn.commit(); conn.close()
                                         st.cache_data.clear()
                                         st.rerun()
-                                st.markdown("---")
             
             with tab_del:
                 conn = get_connection(); cursor = conn.cursor()
@@ -1528,7 +1519,7 @@ else:
                 q_rows = cursor.fetchall(); conn.close()
                 for q_id, q_txt, q_m in q_rows:
                     c1, c2 = st.columns([5, 1])
-                    c1.markdown(f"**#{q_id} [{q_m}M]:** {q_txt}")
+                    c1.markdown(f"**#{q_id} [{q_m}M]:** {q_txt[:200]}")
                     if c2.button(f"🗑️", key=f"td_{q_id}"):
                         conn = get_connection(); cursor = conn.cursor()
                         cursor.execute("DELETE FROM questions WHERE id = ?", (q_id,))
@@ -1702,8 +1693,6 @@ else:
                                                    (direct_ans.strip(), d_id))
                                     conn.commit(); conn.close()
                                     st.rerun()
-                    elif d_stat == "Approved":
-                        st.success(T("✅ Approved", "✅ Approved"))
         
         elif st_nav == T("📖 Question Bank Manager", "📖 Question Bank Manager"):
             st.subheader(T("📖 Question Bank Manager", "📖 Question Bank Manager"))
@@ -1724,7 +1713,6 @@ else:
             
             with tab_ext:
                 st.markdown(T("### 📤 Auto-Extract Engine", "### 📤 Auto-Extract Engine"))
-                st.warning(T("⚠️ PDF Bengali font issue. Manual Paste best.", "⚠️ PDF Bengali font issue. Manual Paste best."))
                 source_type = st.radio(T("Source:", "Source:"), [
                     T("📄 Manual Text Paste", "📄 Manual Text Paste"),
                     T("📁 PDF / DOCX", "📁 PDF / DOCX"),
@@ -1733,7 +1721,6 @@ else:
                 extracted_text = ""
                 
                 if "Manual" in source_type or "ম্যানুয়াল" in source_type:
-                    st.info(T("PDF → Ctrl+C → Ctrl+V here", "PDF → Ctrl+C → Ctrl+V here"))
                     manual_txt = st.text_area(T("Paste Here:", "Paste Here:"), height=250, key="adm_manual_paste")
                     if manual_txt.strip():
                         extracted_text = normalize_bengali_text(manual_txt)
@@ -1765,10 +1752,8 @@ else:
                     st.markdown(T("#### 📝 Preview:", "#### 📝 Preview:"))
                     edited = st.text_area(T("Review:", "Review:"), value=extracted_text, height=200, key="adm_edit")
                     
-                    is_mcq_format = detect_mcq_format(edited)
-                    
-                    if is_mcq_format:
-                        st.success(T("🧠 Bengali MCQ detected! Auto-parsing...", "🧠 Bengali MCQ detected! Auto-parsing..."))
+                    if detect_mcq_format(edited):
+                        st.success(T("🧠 MCQ detected!", "🧠 MCQ detected!"))
                         mcq_parsed = smart_parse_mcq_text(edited)
                         st.info(f"✅ {len(mcq_parsed)} MCQs parsed!")
                         
@@ -1789,7 +1774,7 @@ else:
                             for q in mcq_parsed:
                                 cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', 0, 1, 'MCQ')""",
-                                    (target_t_id, q['question'], translate_bn_to_en(q['question']),
+                                    (target_t_id, q['question'], translate_geo_simple(q['question']),
                                      q['options']['A'], q['options']['B'], q['options']['C'], q['options']['D'],
                                      q['correct'], q['explanation']))
                                 saved += 1
@@ -1805,7 +1790,7 @@ else:
                             saved = 0
                             for q in parsed:
                                 q_bn = q["question"]
-                                q_en = translate_bn_to_en(q_bn)
+                                q_en = translate_geo_simple(q_bn)
                                 cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', ?, ?, ?, ?, ?)""",
                                     (target_t_id, q_bn, q_en, q["opt_a"], q["opt_b"], q["opt_c"], q["opt_d"],
@@ -1820,7 +1805,8 @@ else:
             
             with tab_man:
                 st.markdown(T("### ➕ Manual Upload", "### ➕ Manual Upload"))
-                q_text_bn = st.text_area(T("Question:", "Question:"), key="adm_q_bn")
+                q_text_bn = st.text_area(T("Question (Bengali):", "Question (Bengali):"), key="adm_q_bn")
+                q_en_manual = st.text_input(T("English Translation (Optional — auto if empty):", "English Translation (Optional — auto if empty):"), key="adm_q_en")
                 q_type_choice = st.selectbox(T("Type:", "Type:"), [
                     "MCQ (1 Mark)", "SAQ (1 Mark)", "2 Marks", "3 Marks", "5 Marks"
                 ], key="adm_q_type_sel")
@@ -1828,6 +1814,7 @@ else:
                 q_marks = type_marks_map[q_type_choice]
                 is_mcq = q_type_choice.startswith("MCQ")
                 is_saq = q_type_choice.startswith("SAQ")
+                q_en_final = q_en_manual.strip() if q_en_manual.strip() else translate_geo_simple(q_text_bn)
                 
                 if q_text_bn.strip():
                     match, ratio = check_duplicate_question(q_text_bn, target_t_id)
@@ -1847,7 +1834,7 @@ else:
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', 0, 1, 'MCQ')""",
-                                (target_t_id, q_text_bn, translate_bn_to_en(q_text_bn), oa, ob, oc, od, co, ex))
+                                (target_t_id, q_text_bn, q_en_final, oa, ob, oc, od, co, ex))
                             conn.commit(); conn.close()
                             st.cache_data.clear()
                             st.success("✅"); st.rerun()
@@ -1859,7 +1846,7 @@ else:
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
                                 VALUES (?, ?, ?, ?, ?, 'Medium', 0, 1, 'SAQ')""",
-                                (target_t_id, q_text_bn, translate_bn_to_en(q_text_bn), saq_ans, saq_ex))
+                                (target_t_id, q_text_bn, q_en_final, saq_ans, saq_ex))
                             conn.commit(); conn.close()
                             st.cache_data.clear()
                             st.success("✅"); st.rerun()
@@ -1871,7 +1858,7 @@ else:
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
                                 VALUES (?, ?, ?, 'Hard', 1, ?, ?, ?, 'Broad')""",
-                                (target_t_id, q_text_bn, translate_bn_to_en(q_text_bn), q_marks, ma, ms))
+                                (target_t_id, q_text_bn, q_en_final, q_marks, ma, ms))
                             conn.commit(); conn.close()
                             st.cache_data.clear()
                             st.success("✅"); st.rerun()
@@ -1923,7 +1910,7 @@ else:
                 q_rows = cursor.fetchall(); conn.close()
                 for q_id, q_txt, q_m in q_rows:
                     c1, c2 = st.columns([5, 1])
-                    c1.markdown(f"**#{q_id} [{q_m}M]:** {q_txt}")
+                    c1.markdown(f"**#{q_id} [{q_m}M]:** {q_txt[:200]}")
                     if c2.button(f"🗑️ #{q_id}", key=f"ad_{q_id}"):
                         conn = get_connection(); cursor = conn.cursor()
                         cursor.execute("DELETE FROM questions WHERE id = ?", (q_id,))
