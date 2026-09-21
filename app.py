@@ -11,7 +11,8 @@ from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 import psycopg2
-from psycopg2 import pool
+from psycopg2 import pool, Binary
+from psycopg2.extras import RealDictCursor
 
 try:
     import pypdf
@@ -37,9 +38,6 @@ try:
 except ImportError:
     HAS_DOCX = False
 
-# ============================================================================
-# PAGE CONFIG
-# ============================================================================
 st.set_page_config(
     page_title="WBBSE Geography Portal",
     page_icon="🌍",
@@ -48,7 +46,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# DATABASE CONNECTION — Supabase PostgreSQL
+# DATABASE — Supabase PostgreSQL
 # ============================================================================
 def _get_db_url():
     url = os.environ.get("DATABASE_URL", "")
@@ -101,17 +99,8 @@ def db_cursor():
         except Exception:
             pass
 
-def test_db_connection():
-    try:
-        with db_cursor() as cur:
-            cur.execute("SELECT 1")
-            cur.fetchone()
-        return True
-    except Exception:
-        return False
-
 # ============================================================================
-# BENGALI TEXT NORMALIZATION
+# BENGALI NORMALIZATION
 # ============================================================================
 def normalize_bengali_text(text):
     if not text:
@@ -157,7 +146,7 @@ def extract_text_from_pdf_file(file_obj):
     return normalize_bengali_text(extracted)
 
 # ============================================================================
-# DATABASE MIGRATION
+# DB MIGRATION — All tables
 # ============================================================================
 def verify_and_migrate_db():
     with db_cursor() as cur:
@@ -240,15 +229,11 @@ def verify_and_migrate_db():
             admin_note TEXT DEFAULT '', published_mock_id INTEGER DEFAULT 0,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-        # Settings defaults
         cur.execute("""INSERT INTO system_settings (key, value) VALUES ('portal_url', 'https://geography-exam-portal.onrender.com') ON CONFLICT (key) DO NOTHING""")
         cur.execute("""INSERT INTO system_settings (key, value) VALUES ('upi_id', 'shawonkar6466-1@oksbi') ON CONFLICT (key) DO NOTHING""")
         cur.execute("""INSERT INTO system_settings (key, value) VALUES ('full_access_price', '100') ON CONFLICT (key) DO NOTHING""")
-
-        # Default exam
         cur.execute("""INSERT INTO exams (id, name, description) VALUES (1, 'Madhyamik Class 10', 'WBBSE Class 10 Geography') ON CONFLICT (id) DO NOTHING""")
 
-        # Default topics
         cur.execute("SELECT COUNT(*) FROM topics")
         if cur.fetchone()[0] == 0:
             default_topics = [
@@ -262,7 +247,6 @@ def verify_and_migrate_db():
             for t_name in default_topics:
                 cur.execute("INSERT INTO topics (exam_id, name) VALUES (1, %s)", (t_name,))
 
-# Try migration (only if DB available)
 try:
     if _get_db_url():
         verify_and_migrate_db()
@@ -272,34 +256,36 @@ except Exception as e:
 ADMIN_PASSCODE = "admin123"
 
 # ============================================================================
-# LANGUAGE / TRANSLATION
+# LANGUAGE
 # ============================================================================
 def T(bn, en):
     lang = st.session_state.get('language', 'Bengali')
     return bn if lang == "Bengali" else en
 
-# Term dictionary for basic translation
 BN_EN_TERMS = {
     "কোনটি": "Which one", "কোন": "Which", "কে": "Who", "কি": "What", "কী": "What",
-    "কেন": "Why", "কোথায়": "Where", "কখন": "When", "কিভাবে": "How",
-    "সর্বপ্রথম": "First", "সর্বপ্রধান": "Most important", "প্রধান": "Main",
-    "নাম": "Name", "উদাহরণ": "Example", "বিশেষ": "Special",
+    "কেন": "Why", "কোথায়": "Where", "কখন": "When", "কিভাবে": "How", "কত": "How many",
+    "সর্বপ্রথম": "First", "সর্বপ্রধান": "Most important", "প্রধান": "Main", "মূল": "Main",
+    "নাম": "Name", "উদাহরণ": "Example", "বিশেষ": "Special", "ভিন্ন": "Different",
     "ভূগোল": "Geography", "ভূবিজ্ঞান": "Geology", "ভূমিরূপ": "Landform",
-    "ভূমিকম্প": "Earthquake", "বহির্জাত": "Exogenic", "প্রক্রিয়া": "Process",
-    "পর্যায়ন": "Gradation", "অবক্ষয়": "Weathering", "ক্ষয়": "Erosion",
-    "নদী": "River", "বদ্বীপ": "Delta", "জলপ্রপাত": "Waterfall",
-    "হিমবাহ": "Glacier", "বায়ু": "Wind", "সমুদ্র": "Sea",
+    "ভূমিকম্প": "Earthquake", "বহির্জাত": "Exogenic", "অন্তর্জাত": "Endogenic",
+    "প্রক্রিয়া": "Process", "পর্যায়ন": "Gradation", "অবক্ষয়": "Weathering",
+    "ক্ষয়": "Erosion", "নদী": "River", "বদ্বীপ": "Delta", "জলপ্রপাত": "Waterfall",
+    "হিমবাহ": "Glacier", "বায়ু": "Wind", "সমুদ্র": "Sea", "মহাসাগর": "Ocean",
     "পাহাড়": "Mountain", "পর্বত": "Mountain", "মালভূমি": "Plateau",
     "সমভূমি": "Plain", "উপত্যকা": "Valley", "গিরিখাত": "Canyon",
     "বায়ুমণ্ডল": "Atmosphere", "বারিমণ্ডল": "Hydrosphere", "জীবমণ্ডল": "Biosphere",
     "জলবায়ু": "Climate", "আবহাওয়া": "Weather", "তাপমাত্রা": "Temperature",
     "বৃষ্টিপাত": "Rainfall", "মৌসুমি": "Monsoon", "বর্ষা": "Monsoon",
     "বর্জ্য": "Waste", "ব্যবস্থাপনা": "Management", "দূষণ": "Pollution",
-    "পরিবেশ": "Environment", "ভারত": "India", "পশ্চিমবঙ্গ": "West Bengal",
+    "পরিবেশ": "Environment", "ভারত": "India", "বাংলাদেশ": "Bangladesh",
+    "পশ্চিমবঙ্গ": "West Bengal", "কলকাতা": "Kolkata", "দিল্লি": "Delhi",
+    "হিমালয়": "Himalaya", "গঙ্গা": "Ganga", "ব্রহ্মপুত্র": "Brahmaputra",
     "উপগ্রহ": "Satellite", "চিত্র": "Image", "মানচিত্র": "Map",
-    "ভূ-বৈচিত্র্যসূচক": "Topographical", "প্রথম": "First",
-    "সঠিক": "Correct", "ভুল": "Wrong", "প্রাকৃতিক": "Natural",
+    "ভূ-বৈচিত্র্যসূচক": "Topographical", "স্কেল": "Scale", "দিক": "Direction",
+    "প্রথম": "First", "সঠিক": "Correct", "ভুল": "Wrong", "প্রাকৃতিক": "Natural",
     "নিচের কোনটি": "Which of the following", "ব্যাখ্যা করুন": "Explain",
+    "প্রভাব": "Effect", "ব্যবহার": "Usage",
 }
 
 def translate_geo_simple(bn_text):
@@ -312,8 +298,7 @@ def translate_geo_simple(bn_text):
     for bn in sorted(BN_EN_TERMS.keys(), key=len, reverse=True):
         if bn in result:
             result = result.replace(bn, " " + BN_EN_TERMS[bn] + " ")
-    result = re.sub(r'\s+', ' ', result).strip()
-    return result
+    return re.sub(r'\s+', ' ', result).strip()
 
 def get_q_text(bn_text, en_text):
     lang = st.session_state.get('language', 'Bengali')
@@ -326,7 +311,7 @@ def get_q_text(bn_text, en_text):
     return ""
 
 # ============================================================================
-# CACHED HELPERS
+# CACHED
 # ============================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def cached_topics():
@@ -366,16 +351,13 @@ def cached_questions_for_topic(topic_id):
 def smart_parse_mcq_text(text):
     text = normalize_bengali_text(text)
     lines = text.split('\n')
-    
     OPT_PAT = re.compile(r'^\s*[\(\[]?\s*([কখগঘABCD])\s*[\)\]]\s*[\.\)]?\s*(.*)$', re.UNICODE)
     ANS_PAT = re.compile(r'(?:✅|✔|☑)?\s*(?:সঠিক\s*উত্তর|সঠিক\s*উঃ|Correct\s*Answer|Answer|উত্তর)\s*[:\-–]?\s*[\(\[]?\s*([কখগঘABCD])', re.IGNORECASE | re.UNICODE)
     NOTE_PAT = re.compile(r'^\s*(?:নোট|ব্যাখ্যা|Explanation|Note)\s*[:\-–]\s*(.*)$', re.IGNORECASE | re.UNICODE)
     QNUM_PAT = re.compile(r'^\s*(?:Q\s*\d+[\.\):]|প্রঃ?\s*\d+[\.\):]|\d+[\.\)])\s*(.*)$', re.IGNORECASE | re.UNICODE)
-    
     B2A = {'ক': 'A', 'খ': 'B', 'গ': 'C', 'ঘ': 'D'}
     questions = []
     cur = {'question': '', 'options': {'A': '', 'B': '', 'C': '', 'D': ''}, 'correct': 'A', 'explanation': ''}
-    
     for raw_line in lines:
         s = raw_line.strip()
         if not s:
@@ -413,9 +395,8 @@ def smart_parse_mcq_text(text):
     return questions
 
 def detect_mcq_format(text):
-    lines = text.split('\n')
     cnt = 0
-    for line in lines:
+    for line in text.split('\n'):
         if re.match(r'^[\(\[]?\s*[কখগঘ]\s*[\)\]]', line.strip(), re.UNICODE):
             cnt += 1
     return cnt >= 3
@@ -534,10 +515,7 @@ st.markdown("""
     .stApp, [data-testid="stAppViewContainer"], .main, .block-container {
         background-color: #f1f5f9 !important; color: #0f172a !important;
     }
-    section[data-testid="stSidebar"] {
-        background-color: #ffffff !important;
-        min-width: 280px !important;
-    }
+    section[data-testid="stSidebar"] { background-color: #ffffff !important; min-width: 280px !important; }
     section[data-testid="stSidebar"] * { color: #0f172a !important; }
     h1, h2, h3, h4, h5, h6, p, span, label, div, small, strong, em,
     .stMarkdown, .stMarkdown * { color: #0f172a !important; }
@@ -568,7 +546,6 @@ st.markdown("""
     [data-testid="stMetricValue"], [data-testid="stMetricLabel"] { color: #0f172a !important; }
     .stDataFrame, .stDataFrame * { color: #0f172a !important; }
     .stAlert, .stAlert * { color: #0f172a !important; }
-    
     .header-box {
         background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0284c7 100%);
         padding: 28px; border-radius: 16px; color: #ffffff !important;
@@ -576,7 +553,6 @@ st.markdown("""
     }
     .header-box h1 { color: #ffffff !important; font-size: 2rem !important; font-weight: 700 !important; margin: 0; }
     .header-box p { color: #e0e7ff !important; margin-top: 8px; }
-    
     .card-short {
         background-color: #ffffff !important; color: #000000 !important;
         padding: 22px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
@@ -589,26 +565,22 @@ st.markdown("""
         border-left: 6px solid #7c3aed; margin-bottom: 18px;
     }
     .card-broad h4 { color: #000000 !important; font-weight: 900 !important; }
-    
     .price-card { background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
         padding: 22px; border-radius: 14px; text-align: center;
         border: 2px solid #2563eb; margin-bottom: 15px; }
     .price-card h3 { color: #1e3a8a !important; margin: 0 0 8px 0; font-size: 1.3rem !important; }
     .price-card p { color: #475569 !important; }
     .price-tag { font-size: 2.2rem; font-weight: 900; color: #059669 !important; margin: 10px 0; }
-    
     .price-card-premium { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fcd34d 100%);
         padding: 26px; border-radius: 14px; text-align: center;
         border: 3px solid #f59e0b; margin-bottom: 15px; }
     .price-card-premium h3 { color: #78350f !important; margin: 0 0 8px 0; }
     .price-card-premium p { color: #92400e !important; }
     .price-tag-premium { font-size: 2.6rem; font-weight: 900; color: #b45309 !important; margin: 12px 0; }
-    
     .footer-block { background-color: #0f172a; color: #f8fafc; padding: 28px;
         border-radius: 14px; text-align: center; margin-top: 50px; border-top: 5px solid #2563eb; }
     .footer-block * { color: #f8fafc !important; }
     .footer-block h3 { color: #38bdf8 !important; }
-    
     .lock-box { background: #fef3c7; border: 2px dashed #f59e0b; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 15px; }
     .lock-box * { color: #78350f !important; }
     .ask-corner-card { background: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #16a34a; margin-bottom: 12px; }
@@ -632,20 +604,17 @@ if lang == "Bengali":
     st.markdown("""
         <div class="header-box">
             <h1>🌍 পশ্চিমবঙ্গ ভূগোল পরীক্ষা প্রস্তুতি ও ডিজিটাল ল্যাব</h1>
-            <p>ওয়েস্ট বেঙ্গল বোর্ড (WBBSE) দশম শ্রেণী অফিসিয়াল ভূগোল সিলেকশন প্র্যাকটিস হাব</p>
+            <p>ওয়েস্ট বেঙ্গল বোর্ড (WBBSE) দশম শ্রেণী অফিসিয়াল ভূগোল সিলেবাস প্র্যাকটিস হাব</p>
         </div>""", unsafe_allow_html=True)
 else:
     st.markdown("""
         <div class="header-box">
             <h1>🌍 West Bengal Board Geography Portal</h1>
-            <p>WBBSE Class 10 Geography & Environment — Practice Hub</p>
+            <p>WBBSE Class 10 Geography — Practice Hub</p>
         </div>""", unsafe_allow_html=True)
 
-# ============================================================================
-# DB CONNECTION CHECK
-# ============================================================================
 if not _get_db_url():
-    st.error("⚠️ **DATABASE_URL not configured!** Please set environment variable in Render dashboard.")
+    st.error("⚠️ **DATABASE_URL not configured!**")
     st.info("Render → Your Service → Environment → Add `DATABASE_URL`")
     st.stop()
 
@@ -664,7 +633,6 @@ if not st.session_state.logged_in:
         role_select = st.radio(T("Role:", "Role:"), ["Student", "Teacher", "Admin"], horizontal=True, key="login_role")
         login_user = st.text_input(T("Phone / Username", "Phone / Username"), key="login_u")
         login_pass = st.text_input(T("Password", "Password"), type="password", key="login_p")
-        
         if st.button(T("Enter Portal", "Enter Portal"), use_container_width=True, key="login_submit_btn"):
             if role_select == "Admin" and login_user == "admin" and login_pass == ADMIN_PASSCODE:
                 st.session_state.logged_in = True
@@ -707,12 +675,10 @@ if not st.session_state.logged_in:
         s_phone = st.text_input(T("Phone", "Phone"), key="s_ph")
         s_dist = st.text_input(T("District", "District"), key="s_dist")
         s_pass = st.text_input(T("Password", "Password"), type="password", key="s_pass")
-        
         ref_default_s = st.session_state.get('referred_by', '')
         if ref_default_s:
-            st.success(f"🎁 {T('Referral detected', 'Referral detected')}: `{ref_default_s}`")
+            st.success(f"🎁 Referral detected: `{ref_default_s}`")
         s_ref = st.text_input(T("Referral Code (Optional)", "Referral Code (Optional)"), value=ref_default_s, key="s_ref")
-        
         if st.button(T("Submit Student Registration", "Submit Student Registration"), use_container_width=True, key="student_reg_submit_btn"):
             if s_name and s_school and s_phone and s_pass:
                 try:
@@ -730,7 +696,7 @@ if not st.session_state.logged_in:
                 except Exception as e:
                     st.error(f"Error: {e}")
             else:
-                st.error(T("⚠️ Fill all fields.", "⚠️ Fill all required fields."))
+                st.error(T("⚠️ Fill all fields.", "⚠️ Fill all fields."))
     
     with tab_teacher_reg:
         st.subheader(T("New Teacher Registration", "New Teacher Registration"))
@@ -739,12 +705,10 @@ if not st.session_state.logged_in:
         t_phone = st.text_input(T("Phone", "Phone"), key="t_ph")
         t_dist = st.text_input(T("District", "District"), key="t_dist")
         t_pass = st.text_input(T("Password", "Password"), type="password", key="t_pass")
-        
         ref_default_t = st.session_state.get('referred_by', '')
         if ref_default_t:
-            st.success(f"🎁 {T('Referral detected', 'Referral detected')}: `{ref_default_t}`")
+            st.success(f"🎁 Referral detected: `{ref_default_t}`")
         t_ref = st.text_input(T("Referral Code (Optional)", "Referral Code (Optional)"), value=ref_default_t, key="t_ref")
-        
         if st.button(T("Submit Teacher Registration", "Submit Teacher Registration"), use_container_width=True, key="teacher_reg_submit_btn"):
             if t_name and t_school and t_phone and t_pass:
                 try:
@@ -762,7 +726,7 @@ if not st.session_state.logged_in:
                 except Exception as e:
                     st.error(f"Error: {e}")
             else:
-                st.error(T("⚠️ Fill all fields.", "⚠️ Fill all required fields."))
+                st.error(T("⚠️ Fill all fields.", "⚠️ Fill all fields."))
 
 else:
     # ========================================================================
@@ -775,7 +739,7 @@ else:
     
     if st.session_state.role == "admin":
         st.sidebar.markdown("---")
-        st.sidebar.markdown(T("👑 **Admin Super-Control**", "👑 **Admin Super-Control**"))
+        st.sidebar.markdown("👑 **Admin Super-Control**")
         st.session_state.admin_view_mode = st.sidebar.radio(
             T("View Portal As:", "View Portal As:"),
             ["Admin Control Panel", "Teacher View", "Student View"],
@@ -851,17 +815,17 @@ else:
             T("🎁 Share & Referral Links", "🎁 Share & Referral Links")
         ], key="nav_admin")
     
-    # ---------- Madhyamik Drive Papers ----------
+    # ---------- Shared: Madhyamik Drive ----------
     if st_nav == T("📁 Madhyamik Drive Papers", "📁 Madhyamik Drive Papers"):
-        st.subheader(T("📁 Official Madhyamik Google Drive Papers", "📁 Official Madhyamik Google Drive Papers"))
-        st.markdown(f"""
+        st.subheader("📁 Official Madhyamik Google Drive Papers")
+        st.markdown("""
             <div style="background-color: #eff6ff; border: 2px solid #2563eb; padding: 22px; border-radius: 12px; margin-bottom: 20px;">
-                <h3 style="color: #1e3a8a; margin-top:0;">📥 {T('Official Madhyamik Board Question Papers', 'Official Madhyamik Board Question Papers')}</h3>
-                <p style="color: #0f172a;">{T('২০১৭ থেকে ২০২৬ সালের সব অফিশিয়াল মাধ্যমিক ভূগোল প্রশ্নপত্র:', 'All official Madhyamik Geography papers from 2017 to 2026:')}</p>
+                <h3 style="color: #1e3a8a; margin-top:0;">📥 Official Madhyamik Board Question Papers</h3>
+                <p style="color: #0f172a;">২০১৭ থেকে ২০২৬ সালের সব অফিশিয়াল মাধ্যমিক ভূগোল প্রশ্নপত্র:</p>
                 <a href="https://drive.google.com/drive/folders/1q4cLE5sYcjElqSnZPQ4Tx4lkbrB-U-pj?usp=drive_link" target="_blank" style="background-color: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">🔗 Open Google Drive Folder</a>
             </div>""", unsafe_allow_html=True)
     
-    # ---------- Share & Referral ----------
+    # ---------- Shared: Share & Referral ----------
     elif st_nav == T("🎁 Share & Referral Links", "🎁 Share & Referral Links"):
         st.subheader(T("🎁 Refer Friends & Share Portal", "🎁 Refer Friends & Share Portal"))
         try:
@@ -875,9 +839,9 @@ else:
         my_count = ref_row[1] if ref_row and ref_row[1] else 0
         
         if role == "admin":
-            st.markdown(f"#### 🌐 {T('Portal URL Configuration', 'Portal URL Configuration')}")
-            new_url_val = st.text_input(T("Official Web Link:", "Official Web Link:"), value=current_portal_url, key="adm_portal_url")
-            if st.button(T("💾 Save Portal URL", "💾 Save Portal URL"), key="save_portal_url_btn"):
+            st.markdown("#### 🌐 Portal URL Configuration")
+            new_url_val = st.text_input("Official Web Link:", value=current_portal_url, key="adm_portal_url")
+            if st.button("💾 Save Portal URL", key="save_portal_url_btn"):
                 try:
                     with db_cursor() as cur:
                         cur.execute("""INSERT INTO system_settings (key, value) VALUES ('portal_url', %s)
@@ -894,7 +858,7 @@ else:
         st.progress(min(my_count / 100.0, 1.0))
         if my_count >= 100:
             st.balloons()
-            st.success(T("🎉 100 referrals!", "🎉 100 referrals!"))
+            st.success("🎉 100 referrals!")
         
         ref_link = f"{current_portal_url}?ref={my_code}"
         share_msg = f"🌍 Join WBBSE Class 10 Geography Portal!\n\n👉 Click: {ref_link}\n\n🔑 Code: {my_code}"
@@ -933,76 +897,66 @@ else:
                 my_msgs = cur.fetchall()
             for m_id, cat, msg, rep, stat, ts in my_msgs:
                 with st.expander(f"📌 #{m_id} — {cat} [{stat}]"):
-                    st.markdown(f"**{T('Message', 'Message')}:** {msg}")
+                    st.markdown(f"**Message:** {msg}")
                     if rep and rep.strip():
-                        st.success(f"**{T('Admin Reply', 'Admin Reply')}:** {rep}")
+                        st.success(f"**Admin Reply:** {rep}")
         except Exception:
             pass
     
     # ---------- Pricing & Payment ----------
     elif st_nav == T("💳 Pricing & Payment", "💳 Pricing & Payment"):
         st.subheader(T("💳 Pricing & Payment", "💳 Pricing & Payment"))
-        
         full_access_price = get_full_access_price()
         is_full_access = has_full_access(st.session_state.username)
-        
         if is_full_access:
-            st.success(T("✅ আপনি Full Access কিনেছেন!", "✅ You have Full Access!"))
+            st.success("✅ You have Full Access!")
         
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown(f"""<div class="price-card">
-                <h3>📄 {T('Chapter Exam Set', 'Chapter Exam Set')}</h3>
+                <h3>📄 Chapter Exam Set</h3>
                 <div class="price-tag">₹19</div>
-                <p>{T('প্রতি Set', 'Per Set')}</p></div>""", unsafe_allow_html=True)
+                <p>Per Set</p></div>""", unsafe_allow_html=True)
         with c2:
             st.markdown(f"""<div class="price-card">
-                <h3>🎯 {T('Final Mock Test', 'Final Mock Test')}</h3>
+                <h3>🎯 Final Mock Test</h3>
                 <div class="price-tag">₹49</div>
-                <p>{T('প্রতি Set', 'Per Set')}</p></div>""", unsafe_allow_html=True)
+                <p>Per Set</p></div>""", unsafe_allow_html=True)
         with c3:
             st.markdown(f"""<div class="price-card">
-                <h3>💡 {T('Board Suggestions', 'Board Suggestions')}</h3>
+                <h3>💡 Board Suggestions</h3>
                 <div class="price-tag">₹69</div>
-                <p>{T('প্রতি Set', 'Per Set')}</p></div>""", unsafe_allow_html=True)
+                <p>Per Set</p></div>""", unsafe_allow_html=True)
         
         st.markdown("<br/>", unsafe_allow_html=True)
-        
         st.markdown(f"""<div class="price-card-premium">
-            <h3>👑 {T('FULL ACCESS — সব Question Unlock', 'FULL ACCESS — All Questions')}</h3>
+            <h3>👑 FULL ACCESS — সব Question Unlock</h3>
             <div class="price-tag-premium">₹{full_access_price}</div>
-            <p><strong>{T('MCQ + SAQ + 2/3/5 Marks + Map Pointing', 'MCQ + SAQ + 2/3/5 Marks + Map Pointing')}</strong></p>
+            <p><strong>MCQ + SAQ + 2/3/5 Marks + Map Pointing</strong></p>
         </div>""", unsafe_allow_html=True)
         
         st.markdown("---")
         upi_id = get_upi_id()
         col_qr, col_info = st.columns([1, 1])
         with col_qr:
-            st.markdown(f"#### 📱 {T('Scan & Pay', 'Scan & Pay')}")
+            st.markdown("#### 📱 Scan & Pay")
             try:
                 st.image("payment_qr.png", width=280, caption="Shawon Kar UPI QR")
             except Exception:
                 st.info(f"**UPI ID:** `{upi_id}`")
             st.markdown(f"**UPI ID:** `{upi_id}`")
         with col_info:
-            st.markdown(f"#### 📋 {T('Steps:', 'Steps:')}")
-            st.markdown(T("""
-১. bKash/PhonePe/GPay খুলুন
-২. QR scan বা UPI ID paste
-৩. Amount পাঠান
-৪. UPI Transaction ID submit
-৫. Admin verification → unlock
-            """, """
+            st.markdown("#### 📋 Steps:")
+            st.markdown("""
 1. Open bKash/PhonePe/GPay
 2. Scan QR or paste UPI ID
 3. Send amount
 4. Submit UPI Transaction ID
 5. Admin verification → unlock
-            """))
+            """)
         
         st.markdown("---")
-        st.markdown(f"### 📝 {T('Payment Submit', 'Payment Submit')}")
-        
+        st.markdown("### 📝 Payment Submit")
         try:
             with db_cursor() as cur:
                 cur.execute("SELECT id, test_type, code_num, price FROM mock_tests WHERE is_published = 1 ORDER BY id DESC")
@@ -1010,16 +964,16 @@ else:
         except Exception:
             available_items = []
         
-        item_options = {T(f"👑 FULL ACCESS (₹{full_access_price})", f"👑 FULL ACCESS (₹{full_access_price})"): ("FULL_ACCESS", "FULL_ACCESS", full_access_price)}
+        item_options = {f"👑 FULL ACCESS (₹{full_access_price})": ("FULL_ACCESS", "FULL_ACCESS", full_access_price)}
         for m in available_items:
             label = f"[{m[1]}] {m[2]} — ₹{m[3] or 0}"
             item_options[label] = (m[0], m[1], m[3] or 0)
         
-        sel_item_label = st.selectbox(T("কোন Item unlock?", "Which item to unlock?"), ["-- Select --"] + list(item_options.keys()), key="pay_item_sel")
-        upi_ref_in = st.text_input(T("UPI Transaction ID:", "UPI Transaction ID:"), key="pay_upi_ref")
-        if st.button(T("📤 Submit Payment", "📤 Submit Payment"), use_container_width=True, key="pay_submit_btn"):
+        sel_item_label = st.selectbox("কোন Item unlock?", ["-- Select --"] + list(item_options.keys()), key="pay_item_sel")
+        upi_ref_in = st.text_input("UPI Transaction ID:", key="pay_upi_ref")
+        if st.button("📤 Submit Payment", use_container_width=True, key="pay_submit_btn"):
             if sel_item_label == "-- Select --" or not upi_ref_in.strip():
-                st.warning(T("⚠️ Select & enter UPI ref.", "⚠️ Select & enter UPI ref."))
+                st.warning("⚠️ Select & enter UPI ref.")
             else:
                 m_id, m_type, m_price = item_options[sel_item_label]
                 try:
@@ -1029,7 +983,7 @@ else:
                             (st.session_state.username, st.session_state.full_name, st.session_state.role,
                              st.session_state.phone, m_type, str(m_id), m_price, upi_ref_in.strip()))
                     st.cache_data.clear()
-                    st.success(T("🎉 Submitted!", "🎉 Submitted!"))
+                    st.success("🎉 Submitted!")
                 except Exception as e:
                     st.error(f"Error: {e}")
         
@@ -1044,7 +998,7 @@ else:
                 with st.expander(f"{color} #{p_id} — {itype} — ₹{amt} [{stat}]"):
                     st.markdown(f"**UPI Ref:** `{uref}` | **Date:** {ts}")
                     if note:
-                        st.info(f"{T('Note', 'Note')}: {note}")
+                        st.info(f"Note: {note}")
         except Exception:
             pass
     
@@ -1054,38 +1008,54 @@ else:
     elif active_view_role == "student":
         
         if st_nav == T("🏠 Dashboard", "🏠 Dashboard"):
-            st.subheader(T("🏠 Student Dashboard", "🏠 Student Dashboard"))
+            st.subheader("🏠 Student Dashboard")
             is_full = has_full_access(st.session_state.username)
             colA, colB, colC = st.columns(3)
-            colA.metric(T("📚 Chapters", "📚 Chapters"), "6")
-            colB.metric(T("👑 Full Access", "👑 Full Access"), T("Active", "Active") if is_full else T("Locked", "Locked"))
+            colA.metric("📚 Chapters", "6")
+            colB.metric("👑 Full Access", "Active" if is_full else "Locked")
             try:
                 with db_cursor() as cur:
                     cur.execute("SELECT COUNT(*) FROM questions")
                     total_q = cur.fetchone()[0]
             except Exception:
                 total_q = 0
-            colC.metric(T("❓ Total Questions", "❓ Total Questions"), total_q)
+            colC.metric("❓ Total Questions", total_q)
             
             if is_full:
-                st.success(T("👑 আপনি Full Access User!", "👑 You have Full Access!"))
+                st.success("👑 Full Access Active!")
             else:
-                st.info(T("💡 ₹100 দিয়ে Full Access কিনলে সব প্রশ্ন unlock হবে।", "💡 Buy Full Access for ₹100."))
+                st.info("💡 ₹100 দিয়ে Full Access কিনুন।")
+            
+            st.markdown("---")
+            st.markdown("### 🔥 Featured Questions")
+            topics = cached_topics()
+            try:
+                with db_cursor() as cur:
+                    for t_id, t_name in topics:
+                        cur.execute("""SELECT id, question_text, question_text_en, marks FROM questions WHERE topic_id = %s ORDER BY RANDOM() LIMIT 2""", (t_id,))
+                        qs = cur.fetchall()
+                        if qs:
+                            st.markdown(f"#### 📖 {t_name}")
+                            for q_id, q_bn, q_en, q_m in qs:
+                                q_label = get_q_text(q_bn, q_en)
+                                lock = "🔓" if is_full else "🔒"
+                                with st.expander(f"{lock} [{q_m}M] {q_label[:100]}..."):
+                                    st.markdown(f"**Q:** {q_label}")
+            except Exception:
+                pass
         
         elif st_nav == T("📖 Practice Center", "📖 Practice Center"):
-            st.subheader(T("📖 Practice Center", "📖 Practice Center"))
-            
+            st.subheader("📖 Practice Center")
             topic_dict = {t[1]: t[0] for t in cached_topics()}
             if not topic_dict:
-                st.warning(T("কোনো chapter নেই।", "No chapters available."))
+                st.warning("No chapters.")
                 st.stop()
-            
-            selected_topic_name = st.selectbox(T("Select Chapter:", "Select Chapter:"), list(topic_dict.keys()), key="std_topic_sel")
+            selected_topic_name = st.selectbox("Select Chapter:", list(topic_dict.keys()), key="std_topic_sel")
             target_t_id = topic_dict[selected_topic_name]
             all_questions = cached_questions_for_topic(target_t_id)
             
             if not all_questions:
-                st.info(T("এই chapter এ প্রশ্ন নেই।", "No questions in this chapter."))
+                st.info("No questions in this chapter.")
             else:
                 def get_qtype(q):
                     if len(q) > 21 and q[21]:
@@ -1103,11 +1073,9 @@ else:
                 q5_list = [q for q in all_questions if q[16] == 5 or q[16] > 3]
                 
                 t_mcq, t_saq, t2, t3, t5 = st.tabs([
-                    T(f"📝 MCQ ({len(mcq_list)})", f"📝 MCQ ({len(mcq_list)})"),
-                    T(f"✏️ SAQ ({len(saq_list)})", f"✏️ SAQ ({len(saq_list)})"),
-                    T(f"📘 2 Marks ({len(q2_list)})", f"📘 2 Marks ({len(q2_list)})"),
-                    T(f"📗 3 Marks ({len(q3_list)})", f"📗 3 Marks ({len(q3_list)})"),
-                    T(f"📕 5 Marks ({len(q5_list)})", f"📕 5 Marks ({len(q5_list)})")
+                    f"📝 MCQ ({len(mcq_list)})", f"✏️ SAQ ({len(saq_list)})",
+                    f"📘 2 Marks ({len(q2_list)})", f"📗 3 Marks ({len(q3_list)})",
+                    f"📕 5 Marks ({len(q5_list)})"
                 ])
                 
                 def render_ask(q_id, idx):
@@ -1121,18 +1089,18 @@ else:
                         d_row = None
                     
                     if d_row and d_row[0] == "Approved" and d_row[1] and d_row[1].strip():
-                        st.success(T("✅ Solution Unlocked!", "✅ Solution Unlocked!"))
-                        st.markdown(f"**{T('Answer', 'Answer')}:**\n\n{d_row[1]}")
+                        st.success("✅ Solution Unlocked!")
+                        st.markdown(f"**Answer:**\n\n{d_row[1]}")
                     elif d_row and d_row[0] in ["Pending Admin Assignment", "Assigned to Teacher", "Teacher Submitted (Pending Admin Approval)"]:
                         st.info(f"⏳ {d_row[0]}")
                     else:
-                        if st.button(T(f"🙋 Ask Admin (Q{idx})", f"🙋 Ask Admin (Q{idx})"), key=f"ask_{q_id}", use_container_width=True):
+                        if st.button(f"🙋 Ask Admin (Q{idx})", key=f"ask_{q_id}", use_container_width=True):
                             try:
                                 with db_cursor() as cur:
                                     cur.execute("""INSERT INTO student_doubts (student_username, student_name, question_id, status)
                                         VALUES (%s, %s, %s, 'Pending Admin Assignment')""",
                                         (st.session_state.username, st.session_state.full_name, q_id))
-                                st.success(T("🎉 Sent!", "🎉 Sent!"))
+                                st.success("🎉 Sent!")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error: {e}")
@@ -1150,9 +1118,12 @@ else:
                         user_ans = st.radio(f"Q{idx}:", opts, index=None, key=f"std_mcq_{q_id}")
                         if user_ans:
                             if user_ans[0] == corr_opt:
-                                st.success(T("✅ Correct!", "✅ Correct!"))
+                                st.success("✅ Correct!")
                             else:
-                                st.error(f"❌ {T('Correct', 'Correct')}: {corr_opt}")
+                                st.error(f"❌ Correct: {corr_opt}")
+                            exp_text = get_q_text(expl_bn, expl_en)
+                            if exp_text:
+                                st.info(f"💡 {exp_text}")
                         st.markdown("<hr/>", unsafe_allow_html=True)
                 
                 with t_saq:
@@ -1163,10 +1134,10 @@ else:
                         st.markdown(f"""<div class="card-short" style="border-left-color: #059669;">
                             <span style="background-color: #059669; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">SAQ</span>
                             <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
-                        with st.expander(T("👁️ Answer", "👁️ Answer")):
-                            st.markdown(f"**{T('Answer', 'Answer')}:** {corr_opt}")
+                        with st.expander("👁️ View Answer"):
+                            st.markdown(f"**Answer:** {corr_opt}")
                             if expl_bn or expl_en:
-                                st.markdown(f"**{T('Explanation', 'Explanation')}:** {get_q_text(expl_bn, expl_en)}")
+                                st.markdown(f"**Explanation:** {get_q_text(expl_bn, expl_en)}")
                         st.markdown("<hr/>", unsafe_allow_html=True)
                 
                 with t2:
@@ -1200,7 +1171,7 @@ else:
                         st.markdown("<hr/>", unsafe_allow_html=True)
         
         elif st_nav == T("❓ My Help / Doubt Requests", "❓ My Help / Doubt Requests"):
-            st.subheader(T("❓ My Doubt Requests", "❓ My Doubt Requests"))
+            st.subheader("❓ My Doubt Requests")
             try:
                 with db_cursor() as cur:
                     cur.execute("""SELECT d.id, q.question_text, q.question_text_en, q.marks, d.status, d.teacher_answer, d.timestamp
@@ -1210,7 +1181,7 @@ else:
                 for d_id, q_txt_bn, q_txt_en, q_m, status, t_ans, t_stamp in my_doubts:
                     color = "🟢" if status == "Approved" else "🟡"
                     with st.expander(f"{color} #{d_id} [{q_m}M] — {status}"):
-                        st.markdown(f"**{T('Question', 'Question')}:** {get_q_text(q_txt_bn, q_txt_en)}")
+                        st.markdown(f"**Q:** {get_q_text(q_txt_bn, q_txt_en)}")
                         if status == "Approved" and t_ans:
                             st.success(f"✅ {t_ans}")
                         else:
@@ -1219,7 +1190,7 @@ else:
                 pass
         
         elif st_nav == T("📄 Mock Tests & Suggestions", "📄 Mock Tests & Suggestions"):
-            st.subheader(T("📄 Mock Tests & Suggestions", "📄 Mock Tests & Suggestions"))
+            st.subheader("📄 Mock Tests & Suggestions")
             try:
                 with db_cursor() as cur:
                     cur.execute("SELECT id, test_type, code_num, file_name, file_data, uploader, price, timestamp FROM mock_tests WHERE is_published = 1 ORDER BY id DESC")
@@ -1232,21 +1203,55 @@ else:
                         if f_data:
                             st.download_button(f"📥 {c_num}", data=bytes(f_data), file_name=f_name, key=f"dl_{m_id}")
                     else:
-                        st.markdown(f"""<div class="lock-box">🔒 {T(f'₹{price or 0} payment unlock করুন।', f'Pay ₹{price or 0} to unlock.')}</div>""", unsafe_allow_html=True)
+                        st.markdown(f"""<div class="lock-box">🔒 ₹{price or 0} payment unlock করুন।</div>""", unsafe_allow_html=True)
                     st.markdown("---")
             except Exception:
                 pass
         
         elif st_nav == T("📝 My Exam Submissions", "📝 My Exam Submissions"):
-            st.subheader(T("📝 My Exam Submissions", "📝 My Exam Submissions"))
-            st.info(T("Mock Test unlock করে answer sheet upload করুন।", "Unlock Mock Test and upload answer sheet."))
+            st.subheader("📝 My Exam Submissions")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("SELECT id, test_type, code_num FROM mock_tests WHERE is_published = 1 ORDER BY id DESC")
+                    my_tests = cur.fetchall()
+                unlocked = [(m[0], m[1], m[2]) for m in my_tests if user_has_purchase(st.session_state.username, m[1], m[0])]
+                if not unlocked:
+                    st.warning("First unlock a Mock Test.")
+                else:
+                    test_opts = {f"[{t[1]}] {t[2]}": t[0] for t in unlocked}
+                    sel_test = st.selectbox("Select exam:", list(test_opts.keys()), key="sub_exam_sel")
+                    sub_file = st.file_uploader("Answer Sheet", type=["pdf", "jpg", "jpeg", "png"], key="sub_answer_file")
+                    if st.button("📤 Submit", use_container_width=True, key="sub_ans_btn"):
+                        if sub_file is not None:
+                            selected_type = sel_test.split("]")[0].strip("[")
+                            f_bytes = sub_file.getvalue()
+                            with db_cursor() as cur:
+                                cur.execute("""INSERT INTO exam_submissions (student_username, student_name, exam_type, exam_code, answer_file_name, answer_file_data, status)
+                                    VALUES (%s, %s, %s, %s, %s, %s, 'Submitted')""",
+                                    (st.session_state.username, st.session_state.full_name, selected_type,
+                                     sel_test, sub_file.name, Binary(f_bytes)))
+                            st.success("🎉 Submitted!")
+                
+                st.markdown("---")
+                with db_cursor() as cur:
+                    cur.execute("""SELECT id, exam_code, submitted_at, status, corrected_file_name, corrected_file_data, admin_note
+                        FROM exam_submissions WHERE student_username = %s ORDER BY id DESC""", (st.session_state.username,))
+                    my_subs = cur.fetchall()
+                for s_id, ecode, sub_at, stat, cfname, cfdata, note in my_subs:
+                    with st.expander(f"#{s_id} — {ecode} — {stat}"):
+                        if note:
+                            st.info(f"Note: {note}")
+                        if stat == "Checked & Returned" and cfdata:
+                            st.download_button("📥 Download Corrected", data=bytes(cfdata), file_name=cfname or "corrected", key=f"dl_corr_{s_id}")
+            except Exception as e:
+                st.error(f"Error: {e}")
     
     # ========================================================================
-    # TEACHER PORTAL (minimal)
+    # TEACHER PORTAL
     # ========================================================================
     elif active_view_role == "teacher":
         if st_nav == T("📥 Assigned Student Doubts", "📥 Assigned Student Doubts"):
-            st.subheader(T("📥 Assigned Doubts", "📥 Assigned Doubts"))
+            st.subheader("📥 Assigned Doubts")
             try:
                 with db_cursor() as cur:
                     cur.execute("""SELECT d.id, d.student_name, q.question_text, q.marks, d.status, d.teacher_answer
@@ -1256,94 +1261,189 @@ else:
                 for d_id, s_name, q_txt, q_m, status, t_ans in my_doubts:
                     with st.expander(f"#{d_id} [{q_m}M] — {s_name} — {status}"):
                         st.markdown(f"**Q:** {q_txt}")
-                        sol_in = st.text_area(T("Solution:", "Solution:"), value=t_ans, key=f"t_sol_{d_id}")
-                        if st.button(T("📤 Submit to Admin", "📤 Submit to Admin"), key=f"t_btn_{d_id}"):
+                        sol_in = st.text_area("Solution:", value=t_ans, key=f"t_sol_{d_id}")
+                        if st.button("📤 Submit to Admin", key=f"t_btn_{d_id}"):
                             if sol_in.strip():
-                                try:
-                                    with db_cursor() as cur:
-                                        cur.execute("""UPDATE student_doubts SET teacher_answer = %s, status = 'Teacher Submitted (Pending Admin Approval)' WHERE id = %s""",
-                                            (sol_in.strip(), d_id))
-                                    st.success("✅ Sent!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
+                                with db_cursor() as cur:
+                                    cur.execute("""UPDATE student_doubts SET teacher_answer = %s, status = 'Teacher Submitted (Pending Admin Approval)' WHERE id = %s""",
+                                        (sol_in.strip(), d_id))
+                                st.success("✅ Sent!")
+                                st.rerun()
             except Exception:
                 pass
         
         elif st_nav == T("📖 Question Bank Manager", "📖 Question Bank Manager"):
-            st.subheader(T("📖 Question Bank Manager", "📖 Question Bank Manager"))
+            st.subheader("📖 Question Bank Manager")
             topic_dict = {t[1]: t[0] for t in cached_topics()}
             if not topic_dict:
                 st.error("No chapters."); st.stop()
-            sel_topic_name = st.selectbox(T("Chapter:", "Chapter:"), list(topic_dict.keys()), key="tch_top")
+            sel_topic_name = st.selectbox("Chapter:", list(topic_dict.keys()), key="tch_top")
             target_t_id = topic_dict[sel_topic_name]
             
-            q_text_bn = st.text_area(T("Question (Bengali):", "Question (Bengali):"), key="tch_q_bn")
-            q_type_choice = st.selectbox(T("Type:", "Type:"), ["MCQ (1 Mark)", "SAQ (1 Mark)", "2 Marks", "3 Marks", "5 Marks"], key="tch_q_type_sel")
-            type_marks_map = {"MCQ (1 Mark)": 1, "SAQ (1 Mark)": 1, "2 Marks": 2, "3 Marks": 3, "5 Marks": 5}
-            q_marks = type_marks_map[q_type_choice]
-            is_mcq = q_type_choice.startswith("MCQ")
-            is_saq = q_type_choice.startswith("SAQ")
-            q_en_final = translate_geo_simple(q_text_bn)
+            tab_man, tab_dups, tab_del = st.tabs(["➕ Manual Upload", "🔍 Duplicate Remover", "📖 Browse & Delete"])
             
-            if is_mcq:
-                c1, c2 = st.columns(2)
-                oa = c1.text_input("A)", key="tch_oa")
-                ob = c2.text_input("B)", key="tch_ob")
-                oc = c1.text_input("C)", key="tch_oc")
-                od = c2.text_input("D)", key="tch_od")
-                co = st.selectbox(T("Correct:", "Correct:"), ["A", "B", "C", "D"], key="tch_co")
-                ex = st.text_area(T("Explanation:", "Explanation:"), key="tch_ex")
-                if st.button(T("💾 Save MCQ", "💾 Save MCQ"), key="tch_save_mcq"):
-                    if q_text_bn and oa:
-                        try:
+            with tab_man:
+                q_text_bn = st.text_area("Question (Bengali):", key="tch_q_bn")
+                q_en_manual = st.text_input("English Translation (Optional):", key="tch_q_en")
+                q_type_choice = st.selectbox("Type:", ["MCQ (1 Mark)", "SAQ (1 Mark)", "2 Marks", "3 Marks", "5 Marks"], key="tch_q_type_sel")
+                type_marks_map = {"MCQ (1 Mark)": 1, "SAQ (1 Mark)": 1, "2 Marks": 2, "3 Marks": 3, "5 Marks": 5}
+                q_marks = type_marks_map[q_type_choice]
+                is_mcq = q_type_choice.startswith("MCQ")
+                is_saq = q_type_choice.startswith("SAQ")
+                q_en_final = q_en_manual.strip() if q_en_manual.strip() else translate_geo_simple(q_text_bn)
+                
+                if q_text_bn.strip():
+                    match, ratio = check_duplicate_question(q_text_bn, target_t_id)
+                    if match:
+                        st.warning(f"⚠️ Duplicate ({ratio*100:.1f}%): #{match[0]}")
+                
+                if is_mcq:
+                    c1, c2 = st.columns(2)
+                    oa = c1.text_input("A)", key="tch_oa")
+                    ob = c2.text_input("B)", key="tch_ob")
+                    oc = c1.text_input("C)", key="tch_oc")
+                    od = c2.text_input("D)", key="tch_od")
+                    co = st.selectbox("Correct:", ["A", "B", "C", "D"], key="tch_co")
+                    ex = st.text_area("Explanation:", key="tch_ex")
+                    if st.button("💾 Save MCQ", key="tch_save_mcq"):
+                        if q_text_bn and oa:
+                            try:
+                                with db_cursor() as cur:
+                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'Medium', 0, 1, 'MCQ')""",
+                                        (target_t_id, q_text_bn, q_en_final, oa, ob, oc, od, co, ex))
+                                st.cache_data.clear()
+                                st.success("✅ Added!"); st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                elif is_saq:
+                    saq_ans = st.text_area("Answer:", key="tch_saq_ans")
+                    saq_ex = st.text_area("Explanation:", key="tch_saq_ex")
+                    if st.button("💾 Save SAQ", key="tch_save_saq"):
+                        if q_text_bn and saq_ans:
+                            try:
+                                with db_cursor() as cur:
+                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
+                                        VALUES (%s, %s, %s, %s, %s, 'Medium', 0, 1, 'SAQ')""",
+                                        (target_t_id, q_text_bn, q_en_final, saq_ans, saq_ex))
+                                st.cache_data.clear()
+                                st.success("✅ Added!"); st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                else:
+                    ma = st.text_area(f"Model Answer ({q_marks}M):", key="tch_ma")
+                    ms = st.text_area("Marking Scheme:", key="tch_ms")
+                    if st.button(f"💾 Save {q_marks}M", key="tch_save_broad"):
+                        if q_text_bn:
+                            try:
+                                with db_cursor() as cur:
+                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
+                                        VALUES (%s, %s, %s, 'Hard', 1, %s, %s, %s, 'Broad')""",
+                                        (target_t_id, q_text_bn, q_en_final, q_marks, ma, ms))
+                                st.cache_data.clear()
+                                st.success("✅ Added!"); st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+            
+            with tab_dups:
+                if st.button("🔍 Scan Duplicates", key="tch_scan"):
+                    try:
+                        with db_cursor() as cur:
+                            cur.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = %s ORDER BY id ASC", (target_t_id,))
+                            all_q = cur.fetchall()
+                        if len(all_q) >= 2:
+                            import difflib
+                            groups = []; processed = set()
+                            for i in range(len(all_q)):
+                                if all_q[i][0] in processed: continue
+                                grp = [all_q[i]]
+                                for j in range(i + 1, len(all_q)):
+                                    if all_q[j][0] in processed: continue
+                                    t1 = re.sub(r'[^\w\s]', '', normalize_bengali_text(all_q[i][1])).lower()
+                                    t2 = re.sub(r'[^\w\s]', '', normalize_bengali_text(all_q[j][1])).lower()
+                                    if difflib.SequenceMatcher(None, t1, t2).ratio() >= 0.75:
+                                        grp.append(all_q[j]); processed.add(all_q[j][0])
+                                if len(grp) > 1:
+                                    processed.add(all_q[i][0]); groups.append(grp)
+                            if not groups:
+                                st.success("🎉 No duplicates!")
+                            else:
+                                st.warning(f"⚠️ {len(groups)} Groups found!")
+                                for gi, grp in enumerate(groups, 1):
+                                    st.markdown(f"**Group #{gi}**")
+                                    for q in grp:
+                                        c1, c2 = st.columns([5, 1])
+                                        c1.markdown(f"#{q[0]} [{q[2]}M]: {q[1][:100]}")
+                                        if c2.button(f"🗑️ #{q[0]}", key=f"dup_del_{q[0]}_tch"):
+                                            with db_cursor() as cur:
+                                                cur.execute("DELETE FROM questions WHERE id = %s", (q[0],))
+                                            st.cache_data.clear()
+                                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+            
+            with tab_del:
+                try:
+                    with db_cursor() as cur:
+                        cur.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = %s ORDER BY id DESC", (target_t_id,))
+                        q_rows = cur.fetchall()
+                    for q_id, q_txt, q_m in q_rows:
+                        c1, c2 = st.columns([5, 1])
+                        c1.markdown(f"**#{q_id} [{q_m}M]:** {q_txt[:200]}")
+                        if c2.button(f"🗑️", key=f"td_{q_id}"):
                             with db_cursor() as cur:
-                                cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'Medium', 0, 1, 'MCQ')""",
-                                    (target_t_id, q_text_bn, q_en_final, oa, ob, oc, od, co, ex))
+                                cur.execute("DELETE FROM questions WHERE id = %s", (q_id,))
                             st.cache_data.clear()
-                            st.success("✅ Added!")
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-            elif is_saq:
-                saq_ans = st.text_area(T("Answer:", "Answer:"), key="tch_saq_ans")
-                if st.button(T("💾 Save SAQ", "💾 Save SAQ"), key="tch_save_saq"):
-                    if q_text_bn and saq_ans:
-                        try:
-                            with db_cursor() as cur:
-                                cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, correct_option, difficulty, is_descriptive, marks, q_type)
-                                    VALUES (%s, %s, %s, %s, 'Medium', 0, 1, 'SAQ')""",
-                                    (target_t_id, q_text_bn, q_en_final, saq_ans))
-                            st.cache_data.clear()
-                            st.success("✅ Added!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-            else:
-                ma = st.text_area(f"Model Answer ({q_marks}M):", key="tch_ma")
-                if st.button(f"💾 Save {q_marks}M", key="tch_save_broad"):
-                    if q_text_bn:
-                        try:
-                            with db_cursor() as cur:
-                                cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, q_type)
-                                    VALUES (%s, %s, %s, 'Hard', 1, %s, %s, 'Broad')""",
-                                    (target_t_id, q_text_bn, q_en_final, q_marks, ma))
-                            st.cache_data.clear()
-                            st.success("✅ Added!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
+                except Exception:
+                    pass
+        
+        elif st_nav == T("📝 Check Assigned Answer Sheets", "📝 Check Assigned Answer Sheets"):
+            st.subheader("📝 Check Assigned Answer Sheets")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("""SELECT id, student_name, exam_code, answer_file_name, answer_file_data, submitted_at, status
+                        FROM exam_submissions 
+                        WHERE checker_username = %s AND status IN ('Under Check', 'Teacher Submitted for Admin Review')
+                        ORDER BY id ASC""", (st.session_state.username,))
+                    subs = cur.fetchall()
+                for s_id, s_name, ecode, afname, afdata, sub_at, stat in subs:
+                    st.markdown(f"""<div class="assigned-card">
+                        <strong>📄 #{s_id} — {s_name}</strong><br/>
+                        <small>{ecode} | {stat}</small>
+                    </div>""", unsafe_allow_html=True)
+                    if afdata:
+                        st.download_button("📥 Download Answer Sheet", data=bytes(afdata), file_name=afname, key=f"tch_dl_{s_id}")
+                    if stat == "Under Check":
+                        corr_file = st.file_uploader("Corrected Copy", type=["pdf", "jpg", "jpeg", "png"], key=f"tch_corr_{s_id}")
+                        tch_note = st.text_area("Note:", key=f"tch_note_{s_id}")
+                        if st.button("📤 Submit to Admin", key=f"tch_sub_{s_id}"):
+                            if corr_file is not None:
+                                cf_bytes = corr_file.getvalue()
+                                with db_cursor() as cur:
+                                    cur.execute("""UPDATE exam_submissions 
+                                        SET teacher_corrected_file_name = %s, teacher_corrected_file_data = %s,
+                                            teacher_note = %s, teacher_submitted_at = CURRENT_TIMESTAMP,
+                                            status = 'Teacher Submitted for Admin Review'
+                                        WHERE id = %s""",
+                                        (corr_file.name, Binary(cf_bytes), tch_note.strip(), s_id))
+                                st.success("🎉 Sent!")
+                                st.rerun()
+                    else:
+                        st.success("✅ Submitted!")
+                    st.markdown("---")
+            except Exception:
+                pass
         
         elif st_nav == T("📤 Send Suggestions to Admin", "📤 Send Suggestions to Admin"):
-            st.subheader(T("📤 Send Suggestions", "📤 Send Suggestions"))
+            st.subheader("📤 Send Suggestions to Admin")
             with st.form("teacher_submit_form"):
-                sub_type = st.selectbox(T("Type:", "Type:"), ["Chapter Wise Mock Test", "Final Mock Test", "Board Suggestions"], key="ts_type")
-                sub_title = st.text_input(T("Title:", "Title:"), key="ts_title")
-                sub_desc = st.text_area(T("Details:", "Details:"), key="ts_desc")
-                sub_price_sug = st.number_input(T("Suggested Price (₹):", "Suggested Price (₹):"), min_value=0, value=0, key="ts_price")
-                sub_file = st.file_uploader(T("File", "File"), type=["pdf", "docx"], key="ts_file")
-                if st.form_submit_button(T("📤 Send to Admin", "📤 Send to Admin")):
+                sub_type = st.selectbox("Type:", ["Chapter Wise Mock Test", "Final Mock Test", "Board Suggestions"], key="ts_type")
+                sub_title = st.text_input("Title:", key="ts_title")
+                sub_desc = st.text_area("Details:", key="ts_desc")
+                sub_price_sug = st.number_input("Suggested Price (₹):", min_value=0, value=0, key="ts_price")
+                sub_file = st.file_uploader("File", type=["pdf", "docx"], key="ts_file")
+                if st.form_submit_button("📤 Send to Admin"):
                     if sub_file is not None and sub_title.strip():
                         try:
                             f_bytes = sub_file.getvalue()
@@ -1352,17 +1452,43 @@ else:
                                     VALUES (%s, %s, %s, %s, %s, %s, %s, 'Pending Admin Review')""",
                                     (st.session_state.username, st.session_state.full_name, sub_type,
                                      sub_title.strip(), sub_desc.strip() + f"\n[Price: ₹{sub_price_sug}]",
-                                     sub_file.name, psycopg2.Binary(f_bytes)))
+                                     sub_file.name, Binary(f_bytes)))
                             st.success("🎉 Sent!")
                         except Exception as e:
                             st.error(f"Error: {e}")
+            
+            st.markdown("---")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("SELECT id, sub_type, title, status, admin_note, timestamp FROM teacher_submissions WHERE teacher_username = %s ORDER BY id DESC", (st.session_state.username,))
+                    my_subs = cur.fetchall()
+                for t_id, stype, title, stat, note, ts in my_subs:
+                    with st.expander(f"#{t_id} — {stype} — {title} [{stat}]"):
+                        if note:
+                            st.info(f"Admin Note: {note}")
+            except Exception:
+                pass
+        
+        elif st_nav == T("👨‍🏫 Student Track Records", "👨‍🏫 Student Track Records"):
+            st.subheader("👨‍🏫 Student Track Records")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("""SELECT student_name, student_phone, school_name, district, exam_name, topic_name, score, total_questions, percentage, timestamp FROM student_scores ORDER BY timestamp DESC""")
+                    scores = cur.fetchall()
+                if scores:
+                    df = pd.DataFrame(scores, columns=["Name", "Phone", "School", "District", "Exam", "Topic", "Score", "Total", "Pct", "Timestamp"])
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("No records.")
+            except Exception:
+                pass
     
     # ========================================================================
-    # ADMIN PORTAL (minimal)
+    # ADMIN PORTAL
     # ========================================================================
     elif active_view_role == "admin":
         if st_nav == T("🛡️ User Approvals", "🛡️ User Approvals"):
-            st.subheader(T("🛡️ User Approvals", "🛡️ User Approvals"))
+            st.subheader("🛡️ User Approvals")
             try:
                 with db_cursor() as cur:
                     cur.execute("""SELECT id, role, full_name, school_name, class_grade, phone, district, approved FROM users WHERE is_admin = 0 ORDER BY approved ASC, id DESC""")
@@ -1370,13 +1496,14 @@ else:
                 if all_u:
                     df_u = pd.DataFrame(all_u, columns=["ID", "Role", "Name", "School", "Class", "Phone", "District", "Approved"])
                     st.dataframe(df_u, use_container_width=True)
-                    sel_uid = st.number_input(T("User ID:", "User ID:"), min_value=1, step=1, key="adm_uid")
+                    sel_uid = st.number_input("User ID:", min_value=1, step=1, key="adm_uid")
                     c1, c2 = st.columns(2)
-                    if c1.button(T("✅ Approve", "✅ Approve"), use_container_width=True, key="adm_approve_btn"):
+                    if c1.button("✅ Approve", use_container_width=True, key="adm_approve_btn"):
                         with db_cursor() as cur:
                             cur.execute("UPDATE users SET approved = 1 WHERE id = %s", (sel_uid,))
-                        st.success("Approved!"); st.rerun()
-                    if c2.button(T("🚫 Revoke", "🚫 Revoke"), use_container_width=True, key="adm_revoke_btn"):
+                        st.success("Approved!")
+                        st.rerun()
+                    if c2.button("🚫 Revoke", use_container_width=True, key="adm_revoke_btn"):
                         with db_cursor() as cur:
                             cur.execute("UPDATE users SET approved = 0 WHERE id = %s", (sel_uid,))
                         st.rerun()
@@ -1385,8 +1512,390 @@ else:
             except Exception as e:
                 st.error(f"Error: {e}")
         
+        elif st_nav == T("❓ Student Doubt Assignment Hub", "❓ Student Doubt Assignment Hub"):
+            st.subheader("❓ Doubt Assignment Hub")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("""SELECT d.id, d.student_name, q.question_text, q.marks, d.assigned_teacher_username, d.teacher_answer, d.status
+                        FROM student_doubts d JOIN questions q ON d.question_id = q.id 
+                        ORDER BY CASE WHEN d.status = 'Teacher Submitted (Pending Admin Approval)' THEN 0 WHEN d.status = 'Pending Admin Assignment' THEN 1 ELSE 2 END, d.id DESC""")
+                    doubts = cur.fetchall()
+                    cur.execute("SELECT username, full_name FROM users WHERE role = 'teacher' AND approved = 1")
+                    teachers = cur.fetchall()
+                teacher_map = {f"{t[1]} ({t[0]})": t[0] for t in teachers}
+                
+                if doubts:
+                    df_d = pd.DataFrame(doubts, columns=["ID", "Student", "Question", "Marks", "Assigned", "Answer", "Status"])
+                    st.dataframe(df_d[["ID", "Student", "Question", "Marks", "Status"]], use_container_width=True)
+                    
+                    sel_d_id = st.number_input("Doubt ID:", min_value=1, step=1, key="adm_did")
+                    for d in doubts:
+                        if d[0] == sel_d_id:
+                            st.markdown(f"### #{d[0]} — {d[1]}")
+                            st.markdown(f"**Q:** {d[2]}")
+                            st.markdown(f"**Status:** `{d[6]}`")
+                            if d[6] == "Pending Admin Assignment":
+                                colA, colB = st.columns(2)
+                                with colA:
+                                    if teacher_map:
+                                        sel_t = st.selectbox("Teacher:", list(teacher_map.keys()), key="assign_t")
+                                        if st.button("Assign to Teacher"):
+                                            with db_cursor() as cur:
+                                                cur.execute("UPDATE student_doubts SET assigned_teacher_username = %s, status = 'Assigned to Teacher' WHERE id = %s",
+                                                           (teacher_map[sel_t], d[0]))
+                                            st.rerun()
+                                with colB:
+                                    direct_ans = st.text_area("Direct Solution:", key="direct_ans")
+                                    if st.button("Solve & Approve"):
+                                        if direct_ans.strip():
+                                            with db_cursor() as cur:
+                                                cur.execute("UPDATE student_doubts SET teacher_answer = %s, status = 'Approved' WHERE id = %s",
+                                                           (direct_ans.strip(), d[0]))
+                                            st.rerun()
+                            elif d[6] == "Teacher Submitted (Pending Admin Approval)":
+                                rev = st.text_area("Review & Edit:", value=d[5] or "", key="rev_ans")
+                                if st.button("✅ Approve & Unlock"):
+                                    with db_cursor() as cur:
+                                        cur.execute("UPDATE student_doubts SET teacher_answer = %s, status = 'Approved' WHERE id = %s",
+                                                   (rev.strip(), d[0]))
+                                    st.rerun()
+                            elif d[6] == "Approved":
+                                st.success("✅ Already approved.")
+                else:
+                    st.info("No doubts.")
+            except Exception as e:
+                st.error(f"Error: {e}")
+        
+        elif st_nav == T("📖 Question Bank Manager", "📖 Question Bank Manager"):
+            st.subheader("📖 Question Bank Manager")
+            topic_dict = {t[1]: t[0] for t in cached_topics()}
+            if not topic_dict:
+                st.error("No chapters."); st.stop()
+            sel_topic_name = st.selectbox("Chapter:", list(topic_dict.keys()), key="adm_top")
+            target_t_id = topic_dict[sel_topic_name]
+            
+            tab_ext, tab_man, tab_dups, tab_del = st.tabs([
+                "⚡ File/URL Extractor", "➕ Manual Upload", "🔍 Duplicate Remover", "📖 Browse & Delete"
+            ])
+            
+            with tab_ext:
+                st.markdown("### 📤 Auto-Extract Engine")
+                source_type = st.radio("Source:", ["📄 Manual Text Paste", "📁 PDF / DOCX", "🌐 URL"], key="adm_src")
+                extracted_text = ""
+                
+                if "Manual" in source_type:
+                    manual_txt = st.text_area("Paste Here:", height=250, key="adm_manual_paste")
+                    if manual_txt.strip():
+                        extracted_text = normalize_bengali_text(manual_txt)
+                elif "PDF" in source_type:
+                    file_obj = st.file_uploader("Upload", type=["pdf", "docx"], key="adm_upl")
+                    if file_obj is not None:
+                        ext = file_obj.name.split('.')[-1].lower()
+                        if ext == "pdf":
+                            extracted_text = extract_text_from_pdf_file(file_obj)
+                        elif ext == "docx" and HAS_DOCX:
+                            doc_file = docx.Document(file_obj)
+                            raw = "\n".join([p.text for p in doc_file.paragraphs if p.text.strip()])
+                            extracted_text = normalize_bengali_text(raw)
+                else:
+                    web_url = st.text_input("URL:", key="adm_url")
+                    if st.button("🌐 Fetch"):
+                        if web_url.strip():
+                            try:
+                                req = urllib.request.Request(web_url.strip(), headers={'User-Agent': 'Mozilla/5.0'})
+                                with urllib.request.urlopen(req, timeout=10) as resp:
+                                    html = resp.read().decode('utf-8', errors='ignore')
+                                    raw = re.sub(r'<[^>]+>', ' ', html)
+                                    extracted_text = normalize_bengali_text(raw)
+                                    st.success("Fetched!")
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                
+                if extracted_text:
+                    st.markdown("#### 📝 Preview:")
+                    edited = st.text_area("Review:", value=extracted_text, height=200, key="adm_edit")
+                    
+                    if detect_mcq_format(edited):
+                        st.success("🧠 MCQ format detected!")
+                        mcq_parsed = smart_parse_mcq_text(edited)
+                        st.info(f"✅ {len(mcq_parsed)} MCQs parsed!")
+                        for idx, q in enumerate(mcq_parsed, 1):
+                            with st.expander(f"Q{idx}: {q['question'][:80]}..."):
+                                st.markdown(f"**Q:** {q['question']}")
+                                st.markdown(f"**A)** {q['options']['A']}")
+                                st.markdown(f"**B)** {q['options']['B']}")
+                                st.markdown(f"**C)** {q['options']['C']}")
+                                st.markdown(f"**D)** {q['options']['D']}")
+                                st.success(f"✅ Correct: {q['correct']}")
+                                if q['explanation']:
+                                    st.info(f"📝 {q['explanation']}")
+                        
+                        if st.button(f"🚀 Save {len(mcq_parsed)} MCQs", key="adm_save_mcq_bulk"):
+                            try:
+                                with db_cursor() as cur:
+                                    for q in mcq_parsed:
+                                        cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'Medium', 0, 1, 'MCQ')""",
+                                            (target_t_id, q['question'], translate_geo_simple(q['question']),
+                                             q['options']['A'], q['options']['B'], q['options']['C'], q['options']['D'],
+                                             q['correct'], q['explanation']))
+                                st.cache_data.clear()
+                                st.success(f"🎉 {len(mcq_parsed)} MCQs saved!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    else:
+                        parsed = parse_and_categorize_questions(edited)
+                        st.success(f"{len(parsed)} questions parsed!")
+                        if st.button("🚀 Save All", key="adm_save_all"):
+                            try:
+                                with db_cursor() as cur:
+                                    for q in parsed:
+                                        q_bn = q["question"]
+                                        q_en = translate_geo_simple(q_bn)
+                                        qtype = 'MCQ' if q["marks"] == 1 else 'Broad'
+                                        cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'Medium', %s, %s, %s, %s, %s)""",
+                                            (target_t_id, q_bn, q_en, q["opt_a"], q["opt_b"], q["opt_c"], q["opt_d"],
+                                             q["correct"], q["explanation"], q["is_descriptive"], q["marks"],
+                                             q_bn if q["is_descriptive"] else "", f"{q['marks']}M Scheme", qtype))
+                                st.cache_data.clear()
+                                st.success(f"Saved {len(parsed)}!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+            
+            with tab_man:
+                q_text_bn = st.text_area("Question (Bengali):", key="adm_q_bn")
+                q_en_manual = st.text_input("English Translation (Optional):", key="adm_q_en")
+                q_type_choice = st.selectbox("Type:", ["MCQ (1 Mark)", "SAQ (1 Mark)", "2 Marks", "3 Marks", "5 Marks"], key="adm_q_type_sel")
+                type_marks_map = {"MCQ (1 Mark)": 1, "SAQ (1 Mark)": 1, "2 Marks": 2, "3 Marks": 3, "5 Marks": 5}
+                q_marks = type_marks_map[q_type_choice]
+                is_mcq = q_type_choice.startswith("MCQ")
+                is_saq = q_type_choice.startswith("SAQ")
+                q_en_final = q_en_manual.strip() if q_en_manual.strip() else translate_geo_simple(q_text_bn)
+                
+                if q_text_bn.strip():
+                    match, ratio = check_duplicate_question(q_text_bn, target_t_id)
+                    if match:
+                        st.warning(f"⚠️ Duplicate ({ratio*100:.1f}%): #{match[0]}")
+                
+                if is_mcq:
+                    c1, c2 = st.columns(2)
+                    oa = c1.text_input("A)", key="adm_oa")
+                    ob = c2.text_input("B)", key="adm_ob")
+                    oc = c1.text_input("C)", key="adm_oc")
+                    od = c2.text_input("D)", key="adm_od")
+                    co = st.selectbox("Correct:", ["A", "B", "C", "D"], key="adm_co2")
+                    ex = st.text_area("Explanation:", key="adm_ex2")
+                    if st.button("💾 Save MCQ", key="adm_save_mcq2"):
+                        if q_text_bn and oa:
+                            try:
+                                with db_cursor() as cur:
+                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'Medium', 0, 1, 'MCQ')""",
+                                        (target_t_id, q_text_bn, q_en_final, oa, ob, oc, od, co, ex))
+                                st.cache_data.clear()
+                                st.success("✅"); st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                elif is_saq:
+                    saq_ans = st.text_area("Answer:", key="adm_saq_ans")
+                    saq_ex = st.text_area("Explanation:", key="adm_saq_ex")
+                    if st.button("💾 Save SAQ", key="adm_save_saq"):
+                        if q_text_bn and saq_ans:
+                            try:
+                                with db_cursor() as cur:
+                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
+                                        VALUES (%s, %s, %s, %s, %s, 'Medium', 0, 1, 'SAQ')""",
+                                        (target_t_id, q_text_bn, q_en_final, saq_ans, saq_ex))
+                                st.cache_data.clear()
+                                st.success("✅"); st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                else:
+                    ma = st.text_area(f"Model Answer ({q_marks}M):", key="adm_ma2")
+                    ms = st.text_area("Marking Scheme:", key="adm_ms2")
+                    if st.button(f"💾 Save {q_marks}M", key="adm_save_b"):
+                        if q_text_bn:
+                            try:
+                                with db_cursor() as cur:
+                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
+                                        VALUES (%s, %s, %s, 'Hard', 1, %s, %s, %s, 'Broad')""",
+                                        (target_t_id, q_text_bn, q_en_final, q_marks, ma, ms))
+                                st.cache_data.clear()
+                                st.success("✅"); st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+            
+            with tab_dups:
+                if st.button("🔍 Scan Chapter", key="adm_scan"):
+                    try:
+                        with db_cursor() as cur:
+                            cur.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = %s ORDER BY id ASC", (target_t_id,))
+                            all_q = cur.fetchall()
+                        if len(all_q) >= 2:
+                            import difflib
+                            groups = []; processed = set()
+                            for i in range(len(all_q)):
+                                if all_q[i][0] in processed: continue
+                                grp = [all_q[i]]
+                                for j in range(i + 1, len(all_q)):
+                                    if all_q[j][0] in processed: continue
+                                    t1 = re.sub(r'[^\w\s]', '', normalize_bengali_text(all_q[i][1])).lower()
+                                    t2 = re.sub(r'[^\w\s]', '', normalize_bengali_text(all_q[j][1])).lower()
+                                    if difflib.SequenceMatcher(None, t1, t2).ratio() >= 0.75:
+                                        grp.append(all_q[j]); processed.add(all_q[j][0])
+                                if len(grp) > 1:
+                                    processed.add(all_q[i][0]); groups.append(grp)
+                            if not groups:
+                                st.success("🎉 No duplicates!")
+                            else:
+                                st.warning(f"⚠️ {len(groups)} Groups!")
+                                for gi, grp in enumerate(groups, 1):
+                                    st.markdown(f"**Group #{gi}**")
+                                    for q in grp:
+                                        c1, c2 = st.columns([5, 1])
+                                        c1.markdown(f"#{q[0]} [{q[2]}M]: {q[1][:100]}")
+                                        if c2.button(f"🗑️ #{q[0]}", key=f"dup_del_{q[0]}_adm"):
+                                            with db_cursor() as cur:
+                                                cur.execute("DELETE FROM questions WHERE id = %s", (q[0],))
+                                            st.cache_data.clear()
+                                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+            
+            with tab_del:
+                try:
+                    with db_cursor() as cur:
+                        cur.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = %s ORDER BY id DESC", (target_t_id,))
+                        q_rows = cur.fetchall()
+                    for q_id, q_txt, q_m in q_rows:
+                        c1, c2 = st.columns([5, 1])
+                        c1.markdown(f"**#{q_id} [{q_m}M]:** {q_txt[:200]}")
+                        if c2.button(f"🗑️ #{q_id}", key=f"ad_{q_id}"):
+                            with db_cursor() as cur:
+                                cur.execute("DELETE FROM questions WHERE id = %s", (q_id,))
+                            st.cache_data.clear()
+                            st.rerun()
+                except Exception:
+                    pass
+        
+        elif st_nav == T("📄 Upload Mock Tests & Suggestions", "📄 Upload Mock Tests & Suggestions"):
+            st.subheader("📄 Upload Mock Tests")
+            t_type = st.radio("Type:", ["Chapter Wise Mock Test", "Final Mock Test", "Board Suggestions"], horizontal=True, key="adm_mt")
+            default_price = {"Chapter Wise Mock Test": 19, "Final Mock Test": 49, "Board Suggestions": 69}[t_type]
+            price = st.number_input("Price (₹)", min_value=0, value=default_price, step=1, key="adm_mp")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM mock_tests WHERE test_type = %s", (t_type,))
+                    cnt = cur.fetchone()[0]
+            except Exception:
+                cnt = 0
+            prefix = "chapter mock" if t_type == "Chapter Wise Mock Test" else ("final mock" if t_type == "Final Mock Test" else "suggestion")
+            auto_code = f"{prefix} - {cnt + 1:03d}"
+            st.info(f"Code: `{auto_code}`")
+            up_file = st.file_uploader("File", type=["pdf", "docx"], key="adm_mu")
+            if st.button("🚀 Publish", key="adm_mpub"):
+                if up_file:
+                    try:
+                        f_bytes = up_file.getvalue()
+                        with db_cursor() as cur:
+                            cur.execute("""INSERT INTO mock_tests (test_type, code_num, file_name, file_data, uploader, price, is_published)
+                                VALUES (%s, %s, %s, %s, %s, %s, 1)""",
+                                (t_type, auto_code, up_file.name, Binary(f_bytes), st.session_state.full_name, price))
+                        st.cache_data.clear()
+                        st.success("Published!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+            
+            st.markdown("---")
+            st.markdown("### 📚 All Published Papers")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("SELECT id, test_type, code_num, uploader, price, timestamp FROM mock_tests ORDER BY id DESC")
+                    all_mocks = cur.fetchall()
+                for m_id, mt, cn, up, pr, ts in all_mocks:
+                    cA, cB = st.columns([5, 1])
+                    cA.markdown(f"**#{m_id}** — `{cn}` — {mt} — ₹{pr or 0} — by {up}")
+                    if cB.button(f"🗑️ #{m_id}", key=f"del_mock_{m_id}"):
+                        with db_cursor() as cur:
+                            cur.execute("DELETE FROM mock_tests WHERE id = %s", (m_id,))
+                        st.cache_data.clear()
+                        st.rerun()
+            except Exception:
+                pass
+        
+        elif st_nav == T("📤 Teacher Submissions Review", "📤 Teacher Submissions Review"):
+            st.subheader("📤 Teacher Submissions Review")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("""SELECT id, teacher_name, sub_type, title, description, file_name, file_data, status, admin_note, timestamp FROM teacher_submissions ORDER BY CASE WHEN status = 'Pending Admin Review' THEN 0 ELSE 1 END, id DESC""")
+                    t_subs = cur.fetchall()
+                for t_id, tname, stype, title, desc, fname, fdata, stat, note, ts in t_subs:
+                    with st.expander(f"#{t_id} — {tname} — {stype} — {title} [{stat}]"):
+                        st.markdown(f"**{desc}**")
+                        if fdata:
+                            st.download_button("📥 Download", data=bytes(fdata), file_name=fname, key=f"dl_ts_{t_id}")
+                        if stat == "Pending Admin Review":
+                            admin_note = st.text_input("Note:", key=f"tn_{t_id}")
+                            default_price = {"Chapter Wise Mock Test": 19, "Final Mock Test": 49, "Board Suggestions": 69}.get(stype, 19)
+                            pub_price = st.number_input("Final Price:", min_value=0, value=default_price, step=1, key=f"tp_{t_id}")
+                            colA, colB = st.columns(2)
+                            if colA.button("✅ Publish", key=f"ap_{t_id}"):
+                                try:
+                                    with db_cursor() as cur:
+                                        cur.execute("SELECT COUNT(*) FROM mock_tests WHERE test_type = %s", (stype,))
+                                        cnt2 = cur.fetchone()[0]
+                                        prefix = "chapter mock" if stype == "Chapter Wise Mock Test" else ("final mock" if stype == "Final Mock Test" else "suggestion")
+                                        auto_code = f"{prefix} - {cnt2 + 1:03d}"
+                                        cur.execute("""INSERT INTO mock_tests (test_type, code_num, file_name, file_data, uploader, price, is_published)
+                                            VALUES (%s, %s, %s, %s, %s, %s, 1)""",
+                                            (stype, auto_code, fname, Binary(bytes(fdata)) if fdata else None, f"{tname} (via Teacher)", pub_price))
+                                        cur.execute("UPDATE teacher_submissions SET status = 'Published', admin_note = %s WHERE id = %s", (admin_note.strip(), t_id))
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+                            if colB.button("❌ Reject", key=f"rj_{t_id}"):
+                                with db_cursor() as cur:
+                                    cur.execute("UPDATE teacher_submissions SET status = 'Rejected', admin_note = %s WHERE id = %s", (admin_note.strip(), t_id))
+                                st.rerun()
+            except Exception:
+                pass
+        
+        elif st_nav == T("💡 Ask Corner Suggestions", "💡 Ask Corner Suggestions"):
+            st.subheader("💡 Ask Corner Suggestions")
+            try:
+                with db_cursor() as cur:
+                    cur.execute("SELECT id, submitter_name, submitter_role, category, message, admin_reply, status, timestamp FROM ask_corner ORDER BY id DESC")
+                    asks = cur.fetchall()
+                for a_id, name, role_s, cat, msg, rep, stat, ts in asks:
+                    color = "#16a34a" if stat == "Replied" else "#dc2626"
+                    st.markdown(f"""
+                        <div class="ask-corner-card" style="border-left-color:{color};">
+                        <span style="background:{color};color:white;padding:3px 8px;border-radius:5px;font-size:12px;font-weight:bold;">{stat}</span>
+                        <strong style="margin-left:10px;">#{a_id} — {cat}</strong><br/>
+                        <small>👤 {name} ({role_s}) — {ts}</small>
+                        </div>""", unsafe_allow_html=True)
+                    st.markdown(f"**{msg}**")
+                    reply_text = st.text_area(f"Reply #{a_id}:", value=rep, key=f"ar_{a_id}", height=100)
+                    cA, cB = st.columns(2)
+                    if cA.button("📤 Send Reply", key=f"sr_{a_id}"):
+                        with db_cursor() as cur:
+                            cur.execute("UPDATE ask_corner SET admin_reply = %s, status = 'Replied' WHERE id = %s", (reply_text.strip(), a_id))
+                        st.rerun()
+                    if cB.button("🗑️ Delete", key=f"da_{a_id}"):
+                        with db_cursor() as cur:
+                            cur.execute("DELETE FROM ask_corner WHERE id = %s", (a_id,))
+                        st.rerun()
+                    st.markdown("---")
+            except Exception:
+                pass
+        
         elif st_nav == T("💳 Payment Verifications", "💳 Payment Verifications"):
-            st.subheader(T("💳 Payment Verifications", "💳 Payment Verifications"))
+            st.subheader("💳 Payment Verifications")
             try:
                 with db_cursor() as cur:
                     cur.execute("""SELECT id, user_name, user_role, phone, item_type, item_id, amount, upi_ref, status, timestamp, admin_note
@@ -1398,9 +1907,9 @@ else:
                         st.markdown(f"**Phone:** {phone} | **Item:** {itype} (ID: {iid})")
                         st.markdown(f"**UPI Ref:** `{uref}` | **Time:** {ts}")
                         if stat == "Pending Verification":
-                            adm_note = st.text_input(T("Note:", "Note:"), key=f"pn_{p_id}")
+                            adm_note = st.text_input("Note:", key=f"pn_{p_id}")
                             cb1, cb2 = st.columns(2)
-                            if cb1.button(T("✅ Approve", "✅ Approve"), key=f"pa_{p_id}", use_container_width=True):
+                            if cb1.button("✅ Approve", key=f"pa_{p_id}", use_container_width=True):
                                 try:
                                     with db_cursor() as cur:
                                         cur.execute("UPDATE payments SET status = 'Approved', approved_at = CURRENT_TIMESTAMP, admin_note = %s WHERE id = %s", (adm_note.strip(), p_id))
@@ -1410,7 +1919,7 @@ else:
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error: {e}")
-                            if cb2.button(T("❌ Reject", "❌ Reject"), key=f"pr_{p_id}", use_container_width=True):
+                            if cb2.button("❌ Reject", key=f"pr_{p_id}", use_container_width=True):
                                 with db_cursor() as cur:
                                     cur.execute("UPDATE payments SET status = 'Rejected', admin_note = %s WHERE id = %s", (adm_note.strip(), p_id))
                                 st.cache_data.clear()
@@ -1418,168 +1927,56 @@ else:
             except Exception:
                 pass
         
-        elif st_nav == T("📖 Question Bank Manager", "📖 Question Bank Manager"):
-            st.subheader(T("📖 Question Bank Manager", "📖 Question Bank Manager"))
-            topic_dict = {t[1]: t[0] for t in cached_topics()}
-            if not topic_dict:
-                st.error("No chapters."); st.stop()
-            sel_topic_name = st.selectbox(T("Chapter:", "Chapter:"), list(topic_dict.keys()), key="adm_top")
-            target_t_id = topic_dict[sel_topic_name]
-            
-            tab_man, tab_del = st.tabs([T("➕ Manual Upload", "➕ Manual Upload"), T("📖 Browse & Delete", "📖 Browse & Delete")])
-            
-            with tab_man:
-                q_text_bn = st.text_area(T("Question (Bengali):", "Question (Bengali):"), key="adm_q_bn")
-                q_type_choice = st.selectbox(T("Type:", "Type:"), ["MCQ (1 Mark)", "SAQ (1 Mark)", "2 Marks", "3 Marks", "5 Marks"], key="adm_q_type_sel")
-                type_marks_map = {"MCQ (1 Mark)": 1, "SAQ (1 Mark)": 1, "2 Marks": 2, "3 Marks": 3, "5 Marks": 5}
-                q_marks = type_marks_map[q_type_choice]
-                is_mcq = q_type_choice.startswith("MCQ")
-                is_saq = q_type_choice.startswith("SAQ")
-                q_en_final = translate_geo_simple(q_text_bn)
-                
-                if is_mcq:
-                    c1, c2 = st.columns(2)
-                    oa = c1.text_input("A)", key="adm_oa")
-                    ob = c2.text_input("B)", key="adm_ob")
-                    oc = c1.text_input("C)", key="adm_oc")
-                    od = c2.text_input("D)", key="adm_od")
-                    co = st.selectbox(T("Correct:", "Correct:"), ["A", "B", "C", "D"], key="adm_co2")
-                    ex = st.text_area(T("Explanation:", "Explanation:"), key="adm_ex2")
-                    if st.button(T("💾 Save MCQ", "💾 Save MCQ"), key="adm_save_mcq2"):
-                        if q_text_bn and oa:
-                            try:
-                                with db_cursor() as cur:
-                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'Medium', 0, 1, 'MCQ')""",
-                                        (target_t_id, q_text_bn, q_en_final, oa, ob, oc, od, co, ex))
-                                st.cache_data.clear()
-                                st.success("✅ Added!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-                elif is_saq:
-                    saq_ans = st.text_area(T("Answer:", "Answer:"), key="adm_saq_ans")
-                    if st.button(T("💾 Save SAQ", "💾 Save SAQ"), key="adm_save_saq"):
-                        if q_text_bn and saq_ans:
-                            try:
-                                with db_cursor() as cur:
-                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, correct_option, difficulty, is_descriptive, marks, q_type)
-                                        VALUES (%s, %s, %s, %s, 'Medium', 0, 1, 'SAQ')""",
-                                        (target_t_id, q_text_bn, q_en_final, saq_ans))
-                                st.cache_data.clear()
-                                st.success("✅ Added!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-                else:
-                    ma = st.text_area(f"Model Answer ({q_marks}M):", key="adm_ma2")
-                    if st.button(f"💾 Save {q_marks}M", key="adm_save_b"):
-                        if q_text_bn:
-                            try:
-                                with db_cursor() as cur:
-                                    cur.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, q_type)
-                                        VALUES (%s, %s, %s, 'Hard', 1, %s, %s, 'Broad')""",
-                                        (target_t_id, q_text_bn, q_en_final, q_marks, ma))
-                                st.cache_data.clear()
-                                st.success("✅ Added!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-            
-            with tab_del:
-                try:
-                    with db_cursor() as cur:
-                        cur.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = %s ORDER BY id DESC", (target_t_id,))
-                        q_rows = cur.fetchall()
-                    for q_id, q_txt, q_m in q_rows:
-                        c1, c2 = st.columns([5, 1])
-                        c1.markdown(f"**#{q_id} [{q_m}M]:** {q_txt[:200]}")
-                        if c2.button(f"🗑️", key=f"ad_{q_id}"):
-                            with db_cursor() as cur:
-                                cur.execute("DELETE FROM questions WHERE id = %s", (q_id,))
-                            st.cache_data.clear()
-                            st.rerun()
-                except Exception:
-                    pass
-        
-        elif st_nav == T("📄 Upload Mock Tests & Suggestions", "📄 Upload Mock Tests & Suggestions"):
-            st.subheader(T("📄 Upload Mock Tests", "📄 Upload Mock Tests"))
-            t_type = st.radio(T("Type:", "Type:"), ["Chapter Wise Mock Test", "Final Mock Test", "Board Suggestions"], horizontal=True, key="adm_mt")
-            default_price = {"Chapter Wise Mock Test": 19, "Final Mock Test": 49, "Board Suggestions": 69}[t_type]
-            price = st.number_input(T("Price (₹)", "Price (₹)"), min_value=0, value=default_price, step=1, key="adm_mp")
+        elif st_nav == T("📝 Exam Answer Sheet Checking", "📝 Exam Answer Sheet Checking"):
+            st.subheader("📝 Exam Answer Sheet Checking")
             try:
                 with db_cursor() as cur:
-                    cur.execute("SELECT COUNT(*) FROM mock_tests WHERE test_type = %s", (t_type,))
-                    cnt = cur.fetchone()[0]
-            except Exception:
-                cnt = 0
-            prefix = "chapter mock" if t_type == "Chapter Wise Mock Test" else ("final mock" if t_type == "Final Mock Test" else "suggestion")
-            auto_code = f"{prefix} - {cnt + 1:03d}"
-            st.info(f"Code: `{auto_code}`")
-            up_file = st.file_uploader(T("File", "File"), type=["pdf", "docx"], key="adm_mu")
-            if st.button(T("🚀 Publish", "🚀 Publish"), key="adm_mpub"):
-                if up_file:
-                    try:
-                        f_bytes = up_file.getvalue()
-                        with db_cursor() as cur:
-                            cur.execute("""INSERT INTO mock_tests (test_type, code_num, file_name, file_data, uploader, price, is_published)
-                                VALUES (%s, %s, %s, %s, %s, %s, 1)""",
-                                (t_type, auto_code, up_file.name, psycopg2.Binary(f_bytes), st.session_state.full_name, price))
-                        st.cache_data.clear()
-                        st.success(f"Published!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-        
-        elif st_nav == T("❓ Student Doubt Assignment Hub", "❓ Student Doubt Assignment Hub"):
-            st.subheader(T("❓ Doubt Hub", "❓ Doubt Hub"))
-            try:
-                with db_cursor() as cur:
-                    cur.execute("""SELECT d.id, d.student_name, q.question_text, q.marks, d.teacher_answer, d.status
-                        FROM student_doubts d JOIN questions q ON d.question_id = q.id 
-                        ORDER BY CASE WHEN d.status = 'Teacher Submitted (Pending Admin Approval)' THEN 0 WHEN d.status = 'Pending Admin Assignment' THEN 1 ELSE 2 END, d.id DESC""")
-                    doubts = cur.fetchall()
+                    cur.execute("""SELECT id, student_name, exam_code, answer_file_name, answer_file_data, submitted_at, checker_username, status, admin_note
+                        FROM exam_submissions ORDER BY id DESC""")
+                    subs = cur.fetchall()
                     cur.execute("SELECT username, full_name FROM users WHERE role = 'teacher' AND approved = 1")
                     teachers = cur.fetchall()
                 teacher_map = {f"{t[1]} ({t[0]})": t[0] for t in teachers}
                 
-                if doubts:
-                    df_d = pd.DataFrame(doubts, columns=["ID", "Student", "Question", "Marks", "Answer", "Status"])
-                    st.dataframe(df_d[["ID", "Student", "Question", "Marks", "Status"]], use_container_width=True)
-                    
-                    sel_d_id = st.number_input("Doubt ID:", min_value=1, step=1, key="adm_did")
-                    for d in doubts:
-                        if d[0] == sel_d_id:
-                            st.markdown(f"### #{d[0]} — {d[1]}")
-                            st.markdown(f"**Q:** {d[2]}")
-                            st.markdown(f"**Status:** `{d[5]}`")
-                            if d[5] == "Pending Admin Assignment":
+                for s_id, sname, ecode, afname, afdata, sub_at, checker, stat, note in subs:
+                    with st.expander(f"#{s_id} — {sname} — {ecode} [{stat}]"):
+                        if afdata:
+                            st.download_button("📥 Download", data=bytes(afdata), file_name=afname, key=f"adm_dl_{s_id}")
+                        
+                        if stat == "Submitted":
+                            colA, colB = st.columns(2)
+                            with colA:
                                 if teacher_map:
-                                    sel_t = st.selectbox(T("Teacher:", "Teacher:"), list(teacher_map.keys()), key="assign_t")
-                                    if st.button(T("Assign", "Assign")):
+                                    sel_t = st.selectbox("Teacher:", list(teacher_map.keys()), key=f"chk_{s_id}")
+                                    if st.button("Assign", key=f"asg_{s_id}"):
                                         with db_cursor() as cur:
-                                            cur.execute("UPDATE student_doubts SET assigned_teacher_username = %s, status = 'Assigned to Teacher' WHERE id = %s",
-                                                       (teacher_map[sel_t], d[0]))
+                                            cur.execute("UPDATE exam_submissions SET checker_username = %s, status = 'Under Check' WHERE id = %s",
+                                                       (teacher_map[sel_t], s_id))
                                         st.rerun()
-                                direct_ans = st.text_area(T("Direct Solution:", "Direct Solution:"), key="direct_ans")
-                                if st.button(T("Solve & Approve", "Solve & Approve")):
-                                    if direct_ans.strip():
+                            with colB:
+                                corr_file = st.file_uploader("Corrected:", type=["pdf", "jpg", "png"], key=f"adm_corr_{s_id}")
+                                adm_n = st.text_input("Note:", key=f"adm_n_{s_id}")
+                                if st.button("✅ Return to Student", key=f"adm_up_{s_id}"):
+                                    if corr_file:
+                                        cf_bytes = corr_file.getvalue()
                                         with db_cursor() as cur:
-                                            cur.execute("UPDATE student_doubts SET teacher_answer = %s, status = 'Approved' WHERE id = %s",
-                                                       (direct_ans.strip(), d[0]))
+                                            cur.execute("""UPDATE exam_submissions SET corrected_file_name = %s, corrected_file_data = %s, corrected_at = CURRENT_TIMESTAMP, status = 'Checked & Returned', admin_note = %s WHERE id = %s""",
+                                                       (corr_file.name, Binary(cf_bytes), adm_n.strip(), s_id))
                                         st.rerun()
-                            elif d[5] == "Teacher Submitted (Pending Admin Approval)":
-                                rev = st.text_area("Review:", value=d[4], key="rev_ans")
-                                if st.button(T("✅ Approve", "✅ Approve")):
-                                    with db_cursor() as cur:
-                                        cur.execute("UPDATE student_doubts SET teacher_answer = %s, status = 'Approved' WHERE id = %s",
-                                                   (rev.strip(), d[0]))
-                                    st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
+                        elif stat == "Under Check":
+                            st.info(f"⏳ Under check by `{checker}`")
+                        elif stat == "Checked & Returned":
+                            st.success("✅ Returned.")
+                        
+                        if st.button("🗑️ Delete", key=f"ds_{s_id}"):
+                            with db_cursor() as cur:
+                                cur.execute("DELETE FROM exam_submissions WHERE id = %s", (s_id,))
+                            st.rerun()
+            except Exception:
+                pass
         
         elif st_nav == T("📊 Analytics & Track Records", "📊 Analytics & Track Records"):
-            st.subheader(T("📊 Analytics", "📊 Analytics"))
+            st.subheader("📊 Analytics")
             try:
                 with db_cursor() as cur:
                     cur.execute("SELECT COUNT(*) FROM users")
@@ -1598,9 +1995,7 @@ else:
             except Exception:
                 pass
 
-# ============================================================================
 # FOOTER
-# ============================================================================
 st.markdown("""
     <div class="footer-block">
         <h3 style="margin-bottom: 5px; color: #38bdf8 !important;">Prepared by - Shawon Kar, Sukannya Chakraborty</h3>
