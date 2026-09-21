@@ -6,13 +6,12 @@ import json
 import urllib.request
 import urllib.parse
 import unicodedata
+import ssl
 import pandas as pd
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
-import psycopg2
-from psycopg2 import pool, Binary
-from psycopg2.extras import RealDictCursor
+import pg8000
 
 try:
     import pypdf
@@ -46,7 +45,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# DATABASE — Supabase PostgreSQL
+# DATABASE — PostgreSQL via pg8000 (pure Python, no C deps)
 # ============================================================================
 def _get_db_url():
     url = os.environ.get("DATABASE_URL", "")
@@ -58,46 +57,49 @@ def _get_db_url():
     return url
 
 @st.cache_resource(show_spinner=False)
-def get_pool():
+def get_connection_config():
     db_url = _get_db_url()
     if not db_url:
         return None
-    try:
-        return pool.SimpleConnectionPool(
-            1, 20,
-            dsn=db_url,
-            sslmode='require',
-            connect_timeout=10,
-            keepalives=1,
-            keepalives_idle=30,
-            keepalives_interval=10,
-            keepalives_count=5
-        )
-    except Exception as e:
-        print(f"Pool error: {e}")
+    m = re.match(r'postgres(?:ql)?://([^:]+):([^@]+)@([^:/]+):(\d+)/(.+)', db_url)
+    if not m:
         return None
+    return {
+        "user": m.group(1),
+        "password": urllib.parse.unquote(m.group(2)),
+        "host": m.group(3),
+        "port": int(m.group(4)),
+        "database": m.group(5).split("?")[0],
+    }
 
 @contextmanager
 def db_cursor():
-    p = get_pool()
-    if p is None:
+    config = get_connection_config()
+    if config is None:
         raise Exception("Database not configured")
-    conn = p.getconn()
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    conn = pg8000.connect(**config, ssl_context=ctx, timeout=15)
     try:
         cur = conn.cursor()
         yield cur
         conn.commit()
-    except Exception as e:
+    except Exception:
         try:
             conn.rollback()
         except Exception:
             pass
-        raise e
+        raise
     finally:
         try:
-            p.putconn(conn)
+            conn.close()
         except Exception:
             pass
+
+def _is_integrity_error(e):
+    s = str(e).lower()
+    return "unique" in s or "duplicate" in s or "primary key" in s
 
 # ============================================================================
 # BENGALI NORMALIZATION
@@ -146,7 +148,7 @@ def extract_text_from_pdf_file(file_obj):
     return normalize_bengali_text(extracted)
 
 # ============================================================================
-# DB MIGRATION — All tables
+# DB MIGRATION
 # ============================================================================
 def verify_and_migrate_db():
     with db_cursor() as cur:
@@ -691,10 +693,11 @@ if not st.session_state.logged_in:
                         if s_ref.strip():
                             cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code = %s", (s_ref.strip(),))
                     st.success(T("🎉 Registration requested!", "🎉 Registration requested!"))
-                except psycopg2.IntegrityError:
-                    st.error(T("❌ Account exists.", "❌ Account already exists."))
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    if _is_integrity_error(e):
+                        st.error(T("❌ Account exists.", "❌ Account already exists."))
+                    else:
+                        st.error(f"Error: {e}")
             else:
                 st.error(T("⚠️ Fill all fields.", "⚠️ Fill all fields."))
     
@@ -721,10 +724,11 @@ if not st.session_state.logged_in:
                         if t_ref.strip():
                             cur.execute("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code = %s", (t_ref.strip(),))
                     st.success(T("🎉 Registration requested!", "🎉 Registration requested!"))
-                except psycopg2.IntegrityError:
-                    st.error(T("❌ Account exists.", "❌ Account already exists."))
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    if _is_integrity_error(e):
+                        st.error(T("❌ Account exists.", "❌ Account already exists."))
+                    else:
+                        st.error(f"Error: {e}")
             else:
                 st.error(T("⚠️ Fill all fields.", "⚠️ Fill all fields."))
 
@@ -815,7 +819,7 @@ else:
             T("🎁 Share & Referral Links", "🎁 Share & Referral Links")
         ], key="nav_admin")
     
-    # ---------- Shared: Madhyamik Drive ----------
+    # ---------- Madhyamik Drive ----------
     if st_nav == T("📁 Madhyamik Drive Papers", "📁 Madhyamik Drive Papers"):
         st.subheader("📁 Official Madhyamik Google Drive Papers")
         st.markdown("""
@@ -825,7 +829,7 @@ else:
                 <a href="https://drive.google.com/drive/folders/1q4cLE5sYcjElqSnZPQ4Tx4lkbrB-U-pj?usp=drive_link" target="_blank" style="background-color: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">🔗 Open Google Drive Folder</a>
             </div>""", unsafe_allow_html=True)
     
-    # ---------- Shared: Share & Referral ----------
+    # ---------- Share & Referral ----------
     elif st_nav == T("🎁 Share & Referral Links", "🎁 Share & Referral Links"):
         st.subheader(T("🎁 Refer Friends & Share Portal", "🎁 Refer Friends & Share Portal"))
         try:
@@ -858,7 +862,6 @@ else:
         st.progress(min(my_count / 100.0, 1.0))
         if my_count >= 100:
             st.balloons()
-            st.success("🎉 100 referrals!")
         
         ref_link = f"{current_portal_url}?ref={my_code}"
         share_msg = f"🌍 Join WBBSE Class 10 Geography Portal!\n\n👉 Click: {ref_link}\n\n🔑 Code: {my_code}"
@@ -1025,24 +1028,6 @@ else:
                 st.success("👑 Full Access Active!")
             else:
                 st.info("💡 ₹100 দিয়ে Full Access কিনুন।")
-            
-            st.markdown("---")
-            st.markdown("### 🔥 Featured Questions")
-            topics = cached_topics()
-            try:
-                with db_cursor() as cur:
-                    for t_id, t_name in topics:
-                        cur.execute("""SELECT id, question_text, question_text_en, marks FROM questions WHERE topic_id = %s ORDER BY RANDOM() LIMIT 2""", (t_id,))
-                        qs = cur.fetchall()
-                        if qs:
-                            st.markdown(f"#### 📖 {t_name}")
-                            for q_id, q_bn, q_en, q_m in qs:
-                                q_label = get_q_text(q_bn, q_en)
-                                lock = "🔓" if is_full else "🔒"
-                                with st.expander(f"{lock} [{q_m}M] {q_label[:100]}..."):
-                                    st.markdown(f"**Q:** {q_label}")
-            except Exception:
-                pass
         
         elif st_nav == T("📖 Practice Center", "📖 Practice Center"):
             st.subheader("📖 Practice Center")
@@ -1229,7 +1214,7 @@ else:
                                 cur.execute("""INSERT INTO exam_submissions (student_username, student_name, exam_type, exam_code, answer_file_name, answer_file_data, status)
                                     VALUES (%s, %s, %s, %s, %s, %s, 'Submitted')""",
                                     (st.session_state.username, st.session_state.full_name, selected_type,
-                                     sel_test, sub_file.name, Binary(f_bytes)))
+                                     sel_test, sub_file.name, f_bytes))
                             st.success("🎉 Submitted!")
                 
                 st.markdown("---")
@@ -1426,7 +1411,7 @@ else:
                                             teacher_note = %s, teacher_submitted_at = CURRENT_TIMESTAMP,
                                             status = 'Teacher Submitted for Admin Review'
                                         WHERE id = %s""",
-                                        (corr_file.name, Binary(cf_bytes), tch_note.strip(), s_id))
+                                        (corr_file.name, cf_bytes, tch_note.strip(), s_id))
                                 st.success("🎉 Sent!")
                                 st.rerun()
                     else:
@@ -1452,7 +1437,7 @@ else:
                                     VALUES (%s, %s, %s, %s, %s, %s, %s, 'Pending Admin Review')""",
                                     (st.session_state.username, st.session_state.full_name, sub_type,
                                      sub_title.strip(), sub_desc.strip() + f"\n[Price: ₹{sub_price_sug}]",
-                                     sub_file.name, Binary(f_bytes)))
+                                     sub_file.name, f_bytes))
                             st.success("🎉 Sent!")
                         except Exception as e:
                             st.error(f"Error: {e}")
@@ -1803,7 +1788,7 @@ else:
                         with db_cursor() as cur:
                             cur.execute("""INSERT INTO mock_tests (test_type, code_num, file_name, file_data, uploader, price, is_published)
                                 VALUES (%s, %s, %s, %s, %s, %s, 1)""",
-                                (t_type, auto_code, up_file.name, Binary(f_bytes), st.session_state.full_name, price))
+                                (t_type, auto_code, up_file.name, f_bytes, st.session_state.full_name, price))
                         st.cache_data.clear()
                         st.success("Published!")
                         st.rerun()
@@ -1852,7 +1837,7 @@ else:
                                         auto_code = f"{prefix} - {cnt2 + 1:03d}"
                                         cur.execute("""INSERT INTO mock_tests (test_type, code_num, file_name, file_data, uploader, price, is_published)
                                             VALUES (%s, %s, %s, %s, %s, %s, 1)""",
-                                            (stype, auto_code, fname, Binary(bytes(fdata)) if fdata else None, f"{tname} (via Teacher)", pub_price))
+                                            (stype, auto_code, fname, bytes(fdata) if fdata else None, f"{tname} (via Teacher)", pub_price))
                                         cur.execute("UPDATE teacher_submissions SET status = 'Published', admin_note = %s WHERE id = %s", (admin_note.strip(), t_id))
                                     st.cache_data.clear()
                                     st.rerun()
@@ -1961,7 +1946,7 @@ else:
                                         cf_bytes = corr_file.getvalue()
                                         with db_cursor() as cur:
                                             cur.execute("""UPDATE exam_submissions SET corrected_file_name = %s, corrected_file_data = %s, corrected_at = CURRENT_TIMESTAMP, status = 'Checked & Returned', admin_note = %s WHERE id = %s""",
-                                                       (corr_file.name, Binary(cf_bytes), adm_n.strip(), s_id))
+                                                       (corr_file.name, cf_bytes, adm_n.strip(), s_id))
                                         st.rerun()
                         elif stat == "Under Check":
                             st.info(f"⏳ Under check by `{checker}`")
