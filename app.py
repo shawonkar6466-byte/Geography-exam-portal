@@ -117,6 +117,7 @@ def verify_and_migrate_db():
         difficulty TEXT DEFAULT 'Medium', is_descriptive INTEGER DEFAULT 0,
         marks INTEGER DEFAULT 1, model_answer TEXT, model_answer_en TEXT,
         marking_scheme TEXT, marking_scheme_en TEXT,
+        q_type TEXT DEFAULT 'MCQ',
         FOREIGN KEY(topic_id) REFERENCES topics(id))""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE,
@@ -183,6 +184,7 @@ def verify_and_migrate_db():
     
     safe_add_column(cursor, 'mock_tests', 'price', 'INTEGER DEFAULT 0')
     safe_add_column(cursor, 'mock_tests', 'is_published', 'INTEGER DEFAULT 1')
+    safe_add_column(cursor, 'questions', 'q_type', "TEXT DEFAULT 'MCQ'")
     safe_add_column(cursor, 'exam_submissions', 'teacher_corrected_file_name', 'TEXT DEFAULT ""')
     safe_add_column(cursor, 'exam_submissions', 'teacher_corrected_file_data', 'BLOB')
     safe_add_column(cursor, 'exam_submissions', 'teacher_note', 'TEXT DEFAULT ""')
@@ -190,6 +192,7 @@ def verify_and_migrate_db():
     
     cursor.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('portal_url', 'https://geography-exam-app.streamlit.app')")
     cursor.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('upi_id', 'shawonkar6466-1@oksbi')")
+    cursor.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('full_access_price', '100')")
     
     cursor.execute("INSERT OR IGNORE INTO exams (id, name, description) VALUES (1, 'Madhyamik Class 10', 'WBBSE Class 10 Geography & Environment')")
     cursor.execute("SELECT COUNT(*) FROM topics")
@@ -212,43 +215,278 @@ verify_and_migrate_db()
 
 ADMIN_PASSCODE = "admin123"
 
+# ============================================================================
+# 🌐 COMPLETE LANGUAGE TRANSLATION SYSTEM
+# ============================================================================
+def T(bn, en):
+    """Returns Bengali or English text based on current language setting"""
+    lang = st.session_state.get('language', 'Bengali')
+    return bn if lang == "Bengali" else en
+
+# ============================================================================
+# 🎨 AGGRESSIVE CSS — Fixes Dark Theme Text Visibility
+# ============================================================================
 st.markdown("""
     <style>
-    .main { background-color: #f1f5f9 !important; color: #0f172a !important; }
-    .stApp { font-family: 'SolaimanLipi', 'Kalpurush', 'Noto Sans Bengali', 'Segoe UI', Arial, sans-serif !important; }
-    .stTextInput input, .stTextArea textarea, .stSelectbox select {
-        background-color: #ffffff !important; color: #0f172a !important;
-        border: 1.5px solid #475569 !important; border-radius: 8px !important; font-weight: 600 !important; }
-    .header-box { background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0284c7 100%);
-        padding: 28px; border-radius: 16px; color: #ffffff !important; text-align: center;
-        margin-bottom: 25px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
+    /* ===== FORCE LIGHT BACKGROUND EVERYWHERE ===== */
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"],
+    [data-testid="stToolbar"], [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"], .main, .block-container,
+    section.main, div[role="main"], div.stApp {
+        background-color: #f1f5f9 !important;
+        color: #0f172a !important;
+    }
+    
+    /* ===== SIDEBAR ===== */
+    [data-testid="stSidebar"], [data-testid="stSidebar"] > div,
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+    }
+    [data-testid="stSidebar"] * {
+        color: #0f172a !important;
+    }
+    
+    /* ===== ALL TEXT ELEMENTS ===== */
+    h1, h2, h3, h4, h5, h6, p, span, label, div, small, strong, em,
+    .stMarkdown, .stMarkdown *, .stText, .stCaption,
+    [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] * {
+        color: #0f172a !important;
+    }
+    
+    /* ===== INPUTS / TEXTAREAS / SELECTS ===== */
+    .stTextInput input, .stTextArea textarea, .stSelectbox select,
+    .stNumberInput input, [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea, [data-baseweb="select"] *,
+    input, textarea, select {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border: 1.5px solid #475569 !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+    }
+    input::placeholder, textarea::placeholder {
+        color: #94a3b8 !important;
+    }
+    
+    /* ===== DROPDOWN MENUS ===== */
+    [data-baseweb="popover"], [data-baseweb="menu"], [role="listbox"],
+    [role="option"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+    }
+    [role="option"]:hover {
+        background-color: #eff6ff !important;
+    }
+    
+    /* ===== RADIO BUTTONS ===== */
+    .stRadio label, .stRadio div, [data-testid="stRadio"] * {
+        color: #0f172a !important;
+    }
+    
+    /* ===== EXPANDER ===== */
+    .streamlit-expanderHeader, [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] > details > summary {
+        background-color: #f8fafc !important;
+        color: #0f172a !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stExpander"] > details,
+    [data-testid="stExpander"] {
+        background-color: #ffffff !important;
+        border: 1.5px solid #cbd5e1 !important;
+        border-radius: 10px !important;
+    }
+    
+    /* ===== TABS ===== */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #e2e8f0 !important;
+        border-radius: 10px;
+        padding: 6px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: transparent !important;
+        color: #475569 !important;
+        font-weight: 600 !important;
+        border-radius: 8px !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #ffffff !important;
+        color: #1d4ed8 !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    /* ===== BUTTONS ===== */
+    .stButton > button, .stDownloadButton > button {
+        background-color: #2563eb !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 700 !important;
+        padding: 10px 18px !important;
+        transition: all 0.2s;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        background-color: #1d4ed8 !important;
+        transform: translateY(-1px);
+    }
+    .stButton > button p, .stDownloadButton > button p {
+        color: #ffffff !important;
+    }
+    
+    /* ===== FORM ===== */
+    [data-testid="stForm"] {
+        background-color: #ffffff !important;
+        border: 1.5px solid #cbd5e1 !important;
+        border-radius: 12px !important;
+        padding: 20px !important;
+    }
+    
+    /* ===== METRICS ===== */
+    [data-testid="stMetric"] {
+        background-color: #ffffff !important;
+        padding: 16px !important;
+        border-radius: 12px !important;
+        border: 1.5px solid #cbd5e1 !important;
+    }
+    [data-testid="stMetricValue"], [data-testid="stMetricLabel"],
+    [data-testid="stMetricLabel"] * {
+        color: #0f172a !important;
+    }
+    
+    /* ===== DATAFRAME ===== */
+    .stDataFrame, .stDataFrame * {
+        color: #0f172a !important;
+    }
+    
+    /* ===== ALERTS ===== */
+    .stAlert, .stAlert * {
+        color: #0f172a !important;
+    }
+    
+    /* ===== CUSTOM CLASSES ===== */
+    .header-box {
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0284c7 100%);
+        padding: 28px;
+        border-radius: 16px;
+        color: #ffffff !important;
+        text-align: center;
+        margin-bottom: 25px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+    }
     .header-box h1 { color: #ffffff !important; font-size: 2.1rem !important; font-weight: 700 !important; }
-    .card-short { background-color: #ffffff !important; color: #000000 !important; padding: 22px;
-        border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 6px solid #2563eb;
-        margin-bottom: 18px; border-top: 1.5px solid #cbd5e1; border-right: 1.5px solid #cbd5e1;
-        border-bottom: 1.5px solid #cbd5e1; }
-    .card-short h4, .card-broad h4 { color: #000000 !important; font-weight: 900 !important; font-size: 1.15rem !important; }
-    .card-broad { background-color: #ffffff !important; color: #000000 !important; padding: 22px;
-        border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 6px solid #7c3aed;
-        margin-bottom: 18px; border-top: 1.5px solid #cbd5e1; border-right: 1.5px solid #cbd5e1;
-        border-bottom: 1.5px solid #cbd5e1; }
-    .price-card { background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
-        padding: 22px; border-radius: 14px; text-align: center;
-        border: 2px solid #2563eb; margin-bottom: 15px;
-        box-shadow: 0 6px 18px rgba(37,99,235,0.12); }
+    .header-box p { color: #e0e7ff !important; }
+    
+    .card-short {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        padding: 22px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-left: 6px solid #2563eb;
+        margin-bottom: 18px;
+        border-top: 1.5px solid #cbd5e1;
+        border-right: 1.5px solid #cbd5e1;
+        border-bottom: 1.5px solid #cbd5e1;
+    }
+    .card-short h4 { color: #000000 !important; font-weight: 900 !important; font-size: 1.15rem !important; }
+    
+    .card-broad {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        padding: 22px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-left: 6px solid #7c3aed;
+        margin-bottom: 18px;
+        border-top: 1.5px solid #cbd5e1;
+        border-right: 1.5px solid #cbd5e1;
+        border-bottom: 1.5px solid #cbd5e1;
+    }
+    .card-broad h4 { color: #000000 !important; font-weight: 900 !important; }
+    
+    .price-card {
+        background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
+        padding: 22px;
+        border-radius: 14px;
+        text-align: center;
+        border: 2px solid #2563eb;
+        margin-bottom: 15px;
+        box-shadow: 0 6px 18px rgba(37,99,235,0.12);
+    }
     .price-card h3 { color: #1e3a8a !important; margin: 0 0 8px 0; font-size: 1.3rem !important; }
-    .price-tag { font-size: 2.2rem; font-weight: 900; color: #059669; margin: 10px 0; }
-    .footer-block { background-color: #0f172a; color: #f8fafc; padding: 28px;
-        border-radius: 14px; text-align: center; margin-top: 50px;
-        border-top: 5px solid #2563eb; box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
-    .lock-box { background: #fef3c7; border: 2px dashed #f59e0b; padding: 20px;
-        border-radius: 12px; text-align: center; margin-bottom: 15px; }
-    .ask-corner-card { background: #ffffff; padding: 15px; border-radius: 10px;
-        border-left: 5px solid #16a34a; margin-bottom: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-    .assigned-card { background: linear-gradient(135deg, #fef3c7 0%, #fef9c3 100%);
-        padding: 18px; border-radius: 12px; border-left: 5px solid #f59e0b;
-        margin-bottom: 14px; }
+    .price-card p { color: #475569 !important; }
+    .price-tag { font-size: 2.2rem; font-weight: 900; color: #059669 !important; margin: 10px 0; }
+    
+    .price-card-premium {
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fcd34d 100%);
+        padding: 26px;
+        border-radius: 14px;
+        text-align: center;
+        border: 3px solid #f59e0b;
+        margin-bottom: 15px;
+        box-shadow: 0 8px 22px rgba(245,158,11,0.25);
+    }
+    .price-card-premium h3 { color: #78350f !important; margin: 0 0 8px 0; font-size: 1.4rem !important; }
+    .price-card-premium p { color: #92400e !important; }
+    .price-tag-premium { font-size: 2.6rem; font-weight: 900; color: #b45309 !important; margin: 12px 0; }
+    
+    .footer-block {
+        background-color: #0f172a;
+        color: #f8fafc;
+        padding: 28px;
+        border-radius: 14px;
+        text-align: center;
+        margin-top: 50px;
+        border-top: 5px solid #2563eb;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+    }
+    .footer-block * { color: #f8fafc !important; }
+    .footer-block h3 { color: #38bdf8 !important; }
+    
+    .lock-box {
+        background: #fef3c7;
+        border: 2px dashed #f59e0b;
+        padding: 20px;
+        border-radius: 12px;
+        text-align: center;
+        margin-bottom: 15px;
+    }
+    .lock-box * { color: #78350f !important; }
+    
+    .ask-corner-card {
+        background: #ffffff;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 5px solid #16a34a;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .ask-corner-card * { color: #0f172a !important; }
+    
+    .assigned-card {
+        background: linear-gradient(135deg, #fef3c7 0%, #fef9c3 100%);
+        padding: 18px;
+        border-radius: 12px;
+        border-left: 5px solid #f59e0b;
+        margin-bottom: 14px;
+    }
+    .assigned-card * { color: #78350f !important; }
+    
+    .question-preview-card {
+        background: #ffffff;
+        padding: 18px;
+        border-radius: 12px;
+        border-left: 5px solid #0ea5e9;
+        margin-bottom: 14px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+    }
+    .question-preview-card * { color: #0f172a !important; }
+    .question-preview-card h4 { color: #0369a1 !important; }
+    
+    /* ===== REMOVE STREAMLIT BRANDING COLORS ===== */
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -290,7 +528,8 @@ def parse_and_categorize_questions(content_text):
                 "question": normalize_bengali_text(q_txt), "marks": m_val,
                 "opt_a": "", "opt_b": "", "opt_c": "", "opt_d": "",
                 "correct": "A", "explanation": "Extracted.",
-                "is_descriptive": 1 if m_val > 1 else 0
+                "is_descriptive": 1 if m_val > 1 else 0,
+                "q_type": "MCQ" if m_val == 1 else ("SAQ" if m_val == 1 else "Broad")
             }
         elif current_q:
             if re.search(r'^\(ক\)|^A\)|^a\)', line):
@@ -337,6 +576,10 @@ def user_has_purchase(username, item_type, item_id):
     conn.close()
     return cnt > 0
 
+def has_full_access(username):
+    """Check if user has purchased the ₹100 Full Access Package"""
+    return user_has_purchase(username, "FULL_ACCESS", "ALL")
+
 def get_portal_url():
     conn = get_connection()
     cursor = conn.cursor()
@@ -353,6 +596,17 @@ def get_upi_id():
     conn.close()
     return row[0] if row else "shawonkar6466-1@oksbi"
 
+def get_full_access_price():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM system_settings WHERE key = 'full_access_price'")
+    row = cursor.fetchone()
+    conn.close()
+    return int(row[0]) if row else 100
+
+# ============================================================================
+# SESSION STATE
+# ============================================================================
 defaults = {
     'logged_in': False, 'username': "", 'role': "student",
     'full_name': "", 'school_name': "", 'phone': "", 'district': "",
@@ -370,9 +624,12 @@ try:
 except Exception:
     pass
 
+# ============================================================================
+# SIDEBAR
+# ============================================================================
 st.sidebar.markdown("<h1 style='text-align:center;'>🌍</h1>", unsafe_allow_html=True)
-st.sidebar.title("🌍 WBBSE Geo Lab Portal")
-st.session_state.language = st.sidebar.radio("🌐 Language / ভাষা", ["Bengali", "English"], key="lang_radio")
+st.sidebar.title(T("🌍 WBBSE Geo Lab Portal", "🌍 WBBSE Geo Lab Portal"))
+st.session_state.language = st.sidebar.radio(T("🌐 Language / ভাষা", "🌐 Language"), ["Bengali", "English"], key="lang_radio")
 lang = st.session_state.language
 
 if lang == "Bengali":
@@ -393,16 +650,18 @@ else:
 # ============================================================================
 if not st.session_state.logged_in:
     tab_login, tab_student_reg, tab_teacher_reg = st.tabs([
-        "🔑 Login", "🎓 Student Register", "👨‍🏫 Teacher Register"
+        T("🔑 Login", "🔑 Login"),
+        T("🎓 Student Register", "🎓 Student Register"),
+        T("👨‍🏫 Teacher Register", "👨‍🏫 Teacher Register")
     ])
     
     with tab_login:
-        st.subheader("Sign in")
-        role_select = st.radio("Role:", ["Student", "Teacher", "Admin"], horizontal=True, key="login_role")
-        login_user = st.text_input("Phone / Username", key="login_u")
-        login_pass = st.text_input("Password", type="password", key="login_p")
+        st.subheader(T("Sign in", "Sign in"))
+        role_select = st.radio(T("Role:", "Role:"), ["Student", "Teacher", "Admin"], horizontal=True, key="login_role")
+        login_user = st.text_input(T("Phone / Username", "Phone / Username"), key="login_u")
+        login_pass = st.text_input(T("Password", "Password"), type="password", key="login_p")
         
-        if st.button("Enter Portal", use_container_width=True, key="login_submit_btn"):
+        if st.button(T("Enter Portal", "Enter Portal"), use_container_width=True, key="login_submit_btn"):
             if role_select == "Admin" and login_user == "admin" and login_pass == ADMIN_PASSCODE:
                 st.session_state.logged_in = True
                 st.session_state.username = "admin"
@@ -429,28 +688,27 @@ if not st.session_state.logged_in:
                             st.session_state.district = dist
                             st.rerun()
                         else:
-                            st.warning("⚠️ Admin approval pending.")
+                            st.warning(T("⚠️ Admin approval pending.", "⚠️ Admin approval pending."))
                     else:
-                        st.error("❌ Wrong Password.")
+                        st.error(T("❌ Wrong Password.", "❌ Wrong Password."))
                 else:
-                    st.error("❌ Account not found.")
+                    st.error(T("❌ Account not found.", "❌ Account not found."))
     
     with tab_student_reg:
-        st.subheader("New Student Registration")
-        
-        s_name = st.text_input("Name", key="s_name")
-        s_school = st.text_input("School", key="s_sch")
-        s_class = st.selectbox("Class", ["Class 10 (Madhyamik)"], key="s_cls")
-        s_phone = st.text_input("Phone", key="s_ph")
-        s_dist = st.text_input("District", key="s_dist")
-        s_pass = st.text_input("Password", type="password", key="s_pass")
+        st.subheader(T("New Student Registration", "New Student Registration"))
+        s_name = st.text_input(T("Name", "Name"), key="s_name")
+        s_school = st.text_input(T("School", "School"), key="s_sch")
+        s_class = st.selectbox(T("Class", "Class"), ["Class 10 (Madhyamik)"], key="s_cls")
+        s_phone = st.text_input(T("Phone", "Phone"), key="s_ph")
+        s_dist = st.text_input(T("District", "District"), key="s_dist")
+        s_pass = st.text_input(T("Password", "Password"), type="password", key="s_pass")
         
         ref_default_s = st.session_state.get('referred_by', '')
         if ref_default_s:
-            st.success(f"🎁 Referral Code Auto-Detected: `{ref_default_s}`")
-        s_ref = st.text_input("Referral Code (Optional)", value=ref_default_s, key="s_ref")
+            st.success(f"🎁 {T('Referral Code Auto-Detected', 'Referral Code Auto-Detected')}: `{ref_default_s}`")
+        s_ref = st.text_input(T("Referral Code (Optional)", "Referral Code (Optional)"), value=ref_default_s, key="s_ref")
         
-        if st.button("Submit Student Registration", use_container_width=True, key="student_reg_submit_btn"):
+        if st.button(T("Submit Student Registration", "Submit Student Registration"), use_container_width=True, key="student_reg_submit_btn"):
             if s_name and s_school and s_phone and s_pass:
                 try:
                     conn = get_connection()
@@ -464,27 +722,26 @@ if not st.session_state.logged_in:
                         cursor.execute("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code = ?", (s_ref.strip(),))
                     conn.commit()
                     conn.close()
-                    st.success("🎉 Registration requested! Admin approve করলেই login করতে পারবেন।")
+                    st.success(T("🎉 Registration requested! Admin approve করলেই login করতে পারবেন।", "🎉 Registration requested! You can login once admin approves."))
                 except sqlite3.IntegrityError:
-                    st.error("❌ এই phone number দিয়ে account আছে।")
+                    st.error(T("❌ এই phone number দিয়ে account আছে।", "❌ Account already exists with this phone number."))
             else:
-                st.error("⚠️ সব required field পূরণ করুন।")
+                st.error(T("⚠️ সব required field পূরণ করুন।", "⚠️ Please fill all required fields."))
     
     with tab_teacher_reg:
-        st.subheader("New Teacher Registration")
-        
-        t_name = st.text_input("Name", key="t_name")
-        t_school = st.text_input("School", key="t_sch")
-        t_phone = st.text_input("Phone", key="t_ph")
-        t_dist = st.text_input("District", key="t_dist")
-        t_pass = st.text_input("Password", type="password", key="t_pass")
+        st.subheader(T("New Teacher Registration", "New Teacher Registration"))
+        t_name = st.text_input(T("Name", "Name"), key="t_name")
+        t_school = st.text_input(T("School", "School"), key="t_sch")
+        t_phone = st.text_input(T("Phone", "Phone"), key="t_ph")
+        t_dist = st.text_input(T("District", "District"), key="t_dist")
+        t_pass = st.text_input(T("Password", "Password"), type="password", key="t_pass")
         
         ref_default_t = st.session_state.get('referred_by', '')
         if ref_default_t:
-            st.success(f"🎁 Referral Code Auto-Detected: `{ref_default_t}`")
-        t_ref = st.text_input("Referral Code (Optional)", value=ref_default_t, key="t_ref")
+            st.success(f"🎁 {T('Referral Code Auto-Detected', 'Referral Code Auto-Detected')}: `{ref_default_t}`")
+        t_ref = st.text_input(T("Referral Code (Optional)", "Referral Code (Optional)"), value=ref_default_t, key="t_ref")
         
-        if st.button("Submit Teacher Registration", use_container_width=True, key="teacher_reg_submit_btn"):
+        if st.button(T("Submit Teacher Registration", "Submit Teacher Registration"), use_container_width=True, key="teacher_reg_submit_btn"):
             if t_name and t_school and t_phone and t_pass:
                 try:
                     conn = get_connection()
@@ -498,27 +755,31 @@ if not st.session_state.logged_in:
                         cursor.execute("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code = ?", (t_ref.strip(),))
                     conn.commit()
                     conn.close()
-                    st.success("🎉 Registration requested! Admin approval এর অপেক্ষা করুন।")
+                    st.success(T("🎉 Registration requested! Admin approval এর অপেক্ষা করুন।", "🎉 Registration requested! Waiting for admin approval."))
                 except sqlite3.IntegrityError:
-                    st.error("❌ এই phone number দিয়ে account আছে।")
+                    st.error(T("❌ এই phone number দিয়ে account আছে।", "❌ Account already exists with this phone number."))
             else:
-                st.error("⚠️ সব required field পূরণ করুন।")
+                st.error(T("⚠️ সব required field পূরণ করুন।", "⚠️ Please fill all required fields."))
 
 else:
     # ========================================================================
     # LOGGED-IN INTERFACE
     # ========================================================================
-    st.sidebar.markdown(f"👤 **Name:** `{st.session_state.full_name}`")
-    st.sidebar.markdown(f"🎭 **Role:** `{st.session_state.role.capitalize()}`")
+    st.sidebar.markdown(f"👤 **{T('নাম', 'Name')}:** `{st.session_state.full_name}`")
+    st.sidebar.markdown(f"🎭 **{T('ভূমিকা', 'Role')}:** `{st.session_state.role.capitalize()}`")
     if st.session_state.school_name:
         st.sidebar.caption(f"🏫 {st.session_state.school_name} | {st.session_state.district}")
     
     if st.session_state.role == "admin":
         st.sidebar.markdown("---")
-        st.sidebar.markdown("👑 **Admin Super-Control**")
-        st.session_state.admin_view_mode = st.sidebar.radio("View Portal As:", ["Admin Control Panel", "Teacher View", "Student View"], key="adm_view_mode")
+        st.sidebar.markdown(T("👑 **Admin Super-Control**", "👑 **Admin Super-Control**"))
+        st.session_state.admin_view_mode = st.sidebar.radio(
+            T("View Portal As:", "View Portal As:"),
+            ["Admin Control Panel", "Teacher View", "Student View"],
+            key="adm_view_mode"
+        )
     
-    if st.sidebar.button("Logout", key="logout_btn"):
+    if st.sidebar.button(T("Logout", "Logout"), key="logout_btn"):
         for k in ['logged_in', 'username', 'role', 'full_name', 'school_name', 'phone', 'district', 'referred_by']:
             st.session_state[k] = defaults.get(k, "")
         st.rerun()
@@ -544,60 +805,61 @@ else:
         conn.close()
     
     if active_view_role == "student":
-        st_nav = st.sidebar.selectbox("🎯 Navigation", [
-            "📖 Practice Center",
-            "❓ My Help / Doubt Requests",
-            "📄 Mock Tests & Suggestions",
-            "📝 My Exam Submissions",
-            "📁 Madhyamik Drive Papers",
-            "🎁 Share & Referral Links",
-            "💡 Ask Corner (Suggestions)",
-            "💳 Pricing & Payment"
+        st_nav = st.sidebar.selectbox(T("🎯 Navigation", "🎯 Navigation"), [
+            T("🏠 Dashboard", "🏠 Dashboard"),
+            T("📖 Practice Center", "📖 Practice Center"),
+            T("❓ My Help / Doubt Requests", "❓ My Help / Doubt Requests"),
+            T("📄 Mock Tests & Suggestions", "📄 Mock Tests & Suggestions"),
+            T("📝 My Exam Submissions", "📝 My Exam Submissions"),
+            T("📁 Madhyamik Drive Papers", "📁 Madhyamik Drive Papers"),
+            T("🎁 Share & Referral Links", "🎁 Share & Referral Links"),
+            T("💡 Ask Corner (Suggestions)", "💡 Ask Corner (Suggestions)"),
+            T("💳 Pricing & Payment", "💳 Pricing & Payment")
         ], key="nav_student")
     elif active_view_role == "teacher":
         teacher_menu = [
-            "📥 Assigned Student Doubts",
-            "📖 Question Bank Manager",
+            T("📥 Assigned Student Doubts", "📥 Assigned Student Doubts"),
+            T("📖 Question Bank Manager", "📖 Question Bank Manager"),
         ]
         if teacher_has_assignments:
-            teacher_menu.append("📝 Check Assigned Answer Sheets")
+            teacher_menu.append(T("📝 Check Assigned Answer Sheets", "📝 Check Assigned Answer Sheets"))
         teacher_menu += [
-            "📤 Send Suggestions to Admin",
-            "👨‍🏫 Student Track Records",
-            "📁 Madhyamik Drive Papers",
-            "🎁 Share & Referral Links",
-            "💡 Ask Corner (Suggestions)",
-            "💳 Pricing & Payment"
+            T("📤 Send Suggestions to Admin", "📤 Send Suggestions to Admin"),
+            T("👨‍🏫 Student Track Records", "👨‍🏫 Student Track Records"),
+            T("📁 Madhyamik Drive Papers", "📁 Madhyamik Drive Papers"),
+            T("🎁 Share & Referral Links", "🎁 Share & Referral Links"),
+            T("💡 Ask Corner (Suggestions)", "💡 Ask Corner (Suggestions)"),
+            T("💳 Pricing & Payment", "💳 Pricing & Payment")
         ]
-        st_nav = st.sidebar.selectbox("🎯 Navigation", teacher_menu, key="nav_teacher")
+        st_nav = st.sidebar.selectbox(T("🎯 Navigation", "🎯 Navigation"), teacher_menu, key="nav_teacher")
     else:
-        st_nav = st.sidebar.selectbox("🎯 Navigation", [
-            "🛡️ User Approvals",
-            "❓ Student Doubt Assignment Hub",
-            "📖 Question Bank Manager",
-            "📄 Upload Mock Tests & Suggestions",
-            "📤 Teacher Submissions Review",
-            "💡 Ask Corner Suggestions",
-            "💳 Payment Verifications",
-            "📝 Exam Answer Sheet Checking",
-            "📁 Madhyamik Drive Papers",
-            "📊 Analytics & Track Records",
-            "🎁 Share & Referral Links"
+        st_nav = st.sidebar.selectbox(T("🎯 Navigation", "🎯 Navigation"), [
+            T("🛡️ User Approvals", "🛡️ User Approvals"),
+            T("❓ Student Doubt Assignment Hub", "❓ Student Doubt Assignment Hub"),
+            T("📖 Question Bank Manager", "📖 Question Bank Manager"),
+            T("📄 Upload Mock Tests & Suggestions", "📄 Upload Mock Tests & Suggestions"),
+            T("📤 Teacher Submissions Review", "📤 Teacher Submissions Review"),
+            T("💡 Ask Corner Suggestions", "💡 Ask Corner Suggestions"),
+            T("💳 Payment Verifications", "💳 Payment Verifications"),
+            T("📝 Exam Answer Sheet Checking", "📝 Exam Answer Sheet Checking"),
+            T("📁 Madhyamik Drive Papers", "📁 Madhyamik Drive Papers"),
+            T("📊 Analytics & Track Records", "📊 Analytics & Track Records"),
+            T("🎁 Share & Referral Links", "🎁 Share & Referral Links")
         ], key="nav_admin")
     
     # ---------- Madhyamik Drive Papers ----------
-    if st_nav == "📁 Madhyamik Drive Papers":
-        st.subheader("📁 Official Madhyamik Google Drive Papers")
-        st.markdown("""
+    if st_nav in [T("📁 Madhyamik Drive Papers", "📁 Madhyamik Drive Papers")]:
+        st.subheader(T("📁 Official Madhyamik Google Drive Papers", "📁 Official Madhyamik Google Drive Papers"))
+        st.markdown(f"""
             <div style="background-color: #eff6ff; border: 2px solid #2563eb; padding: 22px; border-radius: 12px; margin-bottom: 20px;">
-                <h3 style="color: #1e3a8a; margin-top:0;">📥 Official Madhyamik Board Question Papers</h3>
-                <p>২০১৭ থেকে ২০২৬ সালের সব অফিশিয়াল মাধ্যমিক ভূগোল প্রশ্নপত্র:</p>
+                <h3 style="color: #1e3a8a; margin-top:0;">📥 {T('Official Madhyamik Board Question Papers', 'Official Madhyamik Board Question Papers')}</h3>
+                <p style="color: #0f172a;">{T('২০১৭ থেকে ২০২৬ সালের সব অফিশিয়াল মাধ্যমিক ভূগোল প্রশ্নপত্র:', 'All official Madhyamik Geography papers from 2017 to 2026:')}</p>
                 <a href="https://drive.google.com/drive/folders/1q4cLE5sYcjElqSnZPQ4Tx4lkbrB-U-pj?usp=drive_link" target="_blank" style="background-color: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">🔗 Open Google Drive Folder</a>
             </div>""", unsafe_allow_html=True)
     
     # ---------- Share & Referral ----------
-    elif st_nav == "🎁 Share & Referral Links":
-        st.subheader("🎁 Refer Friends & Share Portal")
+    elif st_nav in [T("🎁 Share & Referral Links", "🎁 Share & Referral Links")]:
+        st.subheader(T("🎁 Refer Friends & Share Portal", "🎁 Refer Friends & Share Portal"))
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT referral_code, referral_count FROM users WHERE username = ?", (st.session_state.username,))
@@ -607,9 +869,9 @@ else:
         my_count = ref_row[1] if ref_row and ref_row[1] else 0
         
         if role == "admin":
-            st.markdown("#### 🌐 Portal URL Configuration")
-            new_url_val = st.text_input("Official Web Link:", value=current_portal_url, key="adm_portal_url")
-            if st.button("💾 Save Portal URL", key="save_portal_url_btn"):
+            st.markdown(f"#### 🌐 {T('Portal URL Configuration', 'Portal URL Configuration')}")
+            new_url_val = st.text_input(T("Official Web Link:", "Official Web Link:"), value=current_portal_url, key="adm_portal_url")
+            if st.button(T("💾 Save Portal URL", "💾 Save Portal URL"), key="save_portal_url_btn"):
                 cursor.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('portal_url', ?)", (new_url_val.strip(),))
                 conn.commit()
                 current_portal_url = new_url_val.strip()
@@ -618,16 +880,16 @@ else:
         conn.close()
         
         col1, col2 = st.columns(2)
-        col1.metric("Your Referral Code", my_code)
-        col2.metric("Successful Referrals", f"{my_count} / 100")
+        col1.metric(T("Your Referral Code", "Your Referral Code"), my_code)
+        col2.metric(T("Successful Referrals", "Successful Referrals"), f"{my_count} / 100")
         st.progress(min(my_count / 100.0, 1.0))
         if my_count >= 100:
             st.balloons()
-            st.success("🎉 100 referrals! Award Certificate Unlocked!")
+            st.success(T("🎉 100 referrals! Award Certificate Unlocked!", "🎉 100 referrals! Award Certificate Unlocked!"))
         else:
-            st.info(f"💡 {100 - my_count} more referrals for Certificate!")
+            st.info(T(f"💡 {100 - my_count} more referrals for Certificate!", f"💡 {100 - my_count} more referrals for Certificate!"))
         
-        st.markdown("### 📲 Direct Share Links:")
+        st.markdown(f"### 📲 {T('Direct Share Links:', 'Direct Share Links:')}")
         ref_link = f"{current_portal_url}?ref={my_code}"
         share_msg = f"🌍 Join WBBSE Class 10 Geography Portal!\n\n📚 Practice Sets, PYQs, Mock Tests & Doubt Solving\n\n👉 Click here: {ref_link}\n\n🔑 Your referral code: {my_code}\n\n(Use my code during signup!)"
         encoded_msg = urllib.parse.quote(share_msg)
@@ -637,26 +899,30 @@ else:
         col_sms.markdown(f'<a href="sms:?body={encoded_msg}" style="background-color:#0284c7; color:white; padding:10px 16px; border-radius:8px; text-decoration:none; font-weight:bold; display:block; text-align:center;">💬 SMS</a>', unsafe_allow_html=True)
         col_fb.markdown(f'<a href="https://www.facebook.com/sharer/sharer.php?u={urllib.parse.quote(ref_link)}&quote={encoded_msg}" target="_blank" style="background-color:#1d4ed8; color:white; padding:10px 16px; border-radius:8px; text-decoration:none; font-weight:bold; display:block; text-align:center;">📘 Facebook</a>', unsafe_allow_html=True)
         
-        st.markdown("#### 📋 Copy Share Text:")
-        st.text_area("Share Text:", value=share_msg, height=140, key="share_text_area")
+        st.markdown(f"#### 📋 {T('Copy Share Text:', 'Copy Share Text:')}")
+        st.text_area("", value=share_msg, height=140, key="share_text_area", label_visibility="collapsed")
     
-    # ---------- Ask Corner (Student + Teacher) ----------
-    elif st_nav == "💡 Ask Corner (Suggestions)":
-        st.subheader("💡 Ask Corner — Share Your Ideas!")
-        st.markdown("""
+    # ---------- Ask Corner ----------
+    elif st_nav in [T("💡 Ask Corner (Suggestions)", "💡 Ask Corner (Suggestions)")]:
+        st.subheader(T("💡 Ask Corner — Share Your Ideas!", "💡 Ask Corner — Share Your Ideas!"))
+        st.markdown(f"""
             <div style="background-color:#eff6ff; border-left:5px solid #2563eb; padding:18px; border-radius:10px;">
-            <h4>💬 Help Us Improve!</h4>
-            <p>আপনার suggestion সরাসরি Admin এর কাছে পাঠান। Shawon Sir নিজে reply দেবেন।</p>
+            <h4 style="color:#1e3a8a !important;">💬 {T('Help Us Improve!', 'Help Us Improve!')}</h4>
+            <p style="color:#0f172a !important;">{T('আপনার suggestion সরাসরি Admin এর কাছে পাঠান। Shawon Sir নিজে reply দেবেন।', 'Send your suggestion directly to Admin. Shawon Sir will reply personally.')}</p>
             </div>""", unsafe_allow_html=True)
         
         with st.form("ask_corner_form"):
-            ask_cat = st.selectbox("Category:", [
-                "💡 নতুন Feature Idea", "🐛 Bug / সমস্যা",
-                "📚 Question Bank Improve", "🎨 Design / UI",
-                "💰 Pricing", "🎯 Feedback", "❓ অন্যান্য"
+            ask_cat = st.selectbox(T("Category:", "Category:"), [
+                T("💡 নতুন Feature Idea", "💡 New Feature Idea"),
+                T("🐛 Bug / সমস্যা", "🐛 Bug / Issue"),
+                T("📚 Question Bank Improve", "📚 Question Bank Improve"),
+                T("🎨 Design / UI", "🎨 Design / UI"),
+                T("💰 Pricing", "💰 Pricing"),
+                T("🎯 Feedback", "🎯 Feedback"),
+                T("❓ অন্যান্য", "❓ Other")
             ], key="ask_cat_sel")
-            ask_msg = st.text_area("Message:", height=180, key="ask_msg_in")
-            if st.form_submit_button("📤 Submit to Admin", use_container_width=True):
+            ask_msg = st.text_area(T("Message:", "Message:"), height=180, key="ask_msg_in")
+            if st.form_submit_button(T("📤 Submit to Admin", "📤 Submit to Admin"), use_container_width=True):
                 if ask_msg.strip():
                     conn = get_connection()
                     cursor = conn.cursor()
@@ -665,11 +931,11 @@ else:
                         (st.session_state.username, st.session_state.full_name, st.session_state.role, ask_cat, ask_msg.strip()))
                     conn.commit()
                     conn.close()
-                    st.success("🎉 Sent to Admin!")
+                    st.success(T("🎉 Sent to Admin!", "🎉 Sent to Admin!"))
                     st.balloons()
         
         st.markdown("---")
-        st.markdown("### 📬 Previous Messages")
+        st.markdown(f"### 📬 {T('Previous Messages', 'Previous Messages')}")
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""SELECT id, category, message, admin_reply, status, timestamp 
@@ -678,90 +944,117 @@ else:
         my_msgs = cursor.fetchall()
         conn.close()
         if not my_msgs:
-            st.info("No messages yet.")
+            st.info(T("No messages yet.", "No messages yet."))
         else:
             for m_id, cat, msg, rep, stat, ts in my_msgs:
                 with st.expander(f"📌 #{m_id} — {cat} [{stat}]"):
-                    st.markdown(f"**Message:** {msg}")
+                    st.markdown(f"**{T('Message', 'Message')}:** {msg}")
                     if rep and rep.strip():
-                        st.success(f"**Admin Reply:** {rep}")
+                        st.success(f"**{T('Admin Reply', 'Admin Reply')}:** {rep}")
                     else:
-                        st.info("⏳ Waiting for reply.")
+                        st.info(T("⏳ Waiting for reply.", "⏳ Waiting for reply."))
     
     # ---------- Pricing & Payment ----------
-    elif st_nav == "💳 Pricing & Payment":
-        st.subheader("💳 Pricing & Payment")
+    elif st_nav in [T("💳 Pricing & Payment", "💳 Pricing & Payment")]:
+        st.subheader(T("💳 Pricing & Payment", "💳 Pricing & Payment"))
         
+        full_access_price = get_full_access_price()
+        is_full_access = has_full_access(st.session_state.username)
+        
+        if is_full_access:
+            st.success(T("✅ আপনি Full Access Package কিনেছেন! সব প্রশ্ন unlocked।", "✅ You have purchased Full Access Package! All questions unlocked."))
+        
+        # 4 pricing cards — 3 regular + 1 premium full access
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown("""<div class="price-card">
-                <h3>📄 Chapter Exam Set</h3>
+            st.markdown(f"""<div class="price-card">
+                <h3>📄 {T('Chapter Exam Set', 'Chapter Exam Set')}</h3>
                 <div class="price-tag">₹19</div>
-                <p>Per Set</p></div>""", unsafe_allow_html=True)
+                <p>{T('প্রতি Set', 'Per Set')}</p></div>""", unsafe_allow_html=True)
         with c2:
-            st.markdown("""<div class="price-card">
-                <h3>🎯 Final Mock Test</h3>
+            st.markdown(f"""<div class="price-card">
+                <h3>🎯 {T('Final Mock Test', 'Final Mock Test')}</h3>
                 <div class="price-tag">₹49</div>
-                <p>Per Set</p></div>""", unsafe_allow_html=True)
+                <p>{T('প্রতি Set', 'Per Set')}</p></div>""", unsafe_allow_html=True)
         with c3:
-            st.markdown("""<div class="price-card">
-                <h3>💡 Board Suggestions</h3>
+            st.markdown(f"""<div class="price-card">
+                <h3>💡 {T('Board Suggestions', 'Board Suggestions')}</h3>
                 <div class="price-tag">₹69</div>
-                <p>Per Set</p></div>""", unsafe_allow_html=True)
+                <p>{T('প্রতি Set', 'Per Set')}</p></div>""", unsafe_allow_html=True)
+        
+        st.markdown("<br/>", unsafe_allow_html=True)
+        
+        # PREMIUM FULL ACCESS CARD
+        st.markdown(f"""<div class="price-card-premium">
+            <h3>👑 {T('FULL ACCESS — সব Question Unlock', 'FULL ACCESS — Unlock ALL Questions')}</h3>
+            <div class="price-tag-premium">₹{full_access_price}</div>
+            <p style="font-size:1.05em;"><strong>{T('MCQ + SAQ + 2 Marks + 3 Marks + 5 Marks + Map Pointing', 'MCQ + SAQ + 2 Marks + 3 Marks + 5 Marks + Map Pointing')}</strong></p>
+            <p>{T('সব chapter এর সব প্রশ্ন একসাথে unlock!', 'Unlock ALL questions from ALL chapters!')}</p>
+        </div>""", unsafe_allow_html=True)
         
         st.markdown("---")
-        st.markdown("### 💳 Payment করুন")
+        st.markdown(f"### 💳 {T('Payment করুন', 'Make Payment')}")
         
         upi_id = get_upi_id()
         col_qr, col_info = st.columns([1, 1])
         with col_qr:
-            st.markdown("#### 📱 Scan & Pay")
+            st.markdown(f"#### 📱 {T('Scan & Pay', 'Scan & Pay')}")
             try:
                 st.image("payment_qr.png", width=280, caption="Shawon Kar UPI QR")
             except Exception:
-                st.warning("⚠️ payment_qr.png missing.")
+                st.warning(T("⚠️ payment_qr.png missing.", "⚠️ payment_qr.png missing."))
             st.markdown(f"**UPI ID:** `{upi_id}`")
         with col_info:
-            st.markdown("#### 📋 Steps:")
-            st.markdown("""
-            ১. bKash/PhonePe/GPay খুলুন
-            ২. QR scan করুন বা UPI ID paste করুন
-            ৩. Amount পাঠান (₹19/₹49/₹69)
-            ৪. UPI Transaction ID submit করুন
-            ৫. Admin verification → unlock
-            """)
+            st.markdown(f"#### 📋 {T('Steps:', 'Steps:')}")
+            st.markdown(T("""
+১. bKash/PhonePe/GPay খুলুন
+২. QR scan করুন বা UPI ID paste করুন
+৩. Amount পাঠান (₹19 / ₹49 / ₹69 / ₹100)
+৪. UPI Transaction ID submit করুন
+৫. Admin verification → unlock
+            """, """
+1. Open bKash/PhonePe/GPay
+2. Scan QR or paste UPI ID
+3. Send amount (₹19 / ₹49 / ₹69 / ₹100)
+4. Submit UPI Transaction ID
+5. Admin verification → unlock
+            """))
         
         st.markdown("---")
-        st.markdown("### 📝 Payment Submit")
+        st.markdown(f"### 📝 {T('Payment Submit', 'Payment Submit')}")
+        
+        # Build item options — includes Full Access
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT id, test_type, code_num, price FROM mock_tests WHERE is_published = 1 ORDER BY id DESC")
         available_items = cursor.fetchall()
         conn.close()
         
-        if not available_items:
-            st.info("📭 এখনো কোনো Mock Test upload হয়নি।")
-        else:
-            item_options = {f"[{m[1]}] {m[2]} — ₹{m[3] or 0}": (m[0], m[1], m[3] or 0) for m in available_items}
-            sel_item_label = st.selectbox("কোন Item unlock করতে চান?", ["-- Select --"] + list(item_options.keys()), key="pay_item_sel")
-            upi_ref_in = st.text_input("UPI Transaction ID:", key="pay_upi_ref")
-            if st.button("📤 Submit Payment for Verification", use_container_width=True, key="pay_submit_btn"):
-                if sel_item_label == "-- Select --" or not upi_ref_in.strip():
-                    st.warning("⚠️ Select item & enter UPI ref.")
-                else:
-                    m_id, m_type, m_price = item_options[sel_item_label]
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("""INSERT INTO payments (username, user_name, user_role, phone, item_type, item_id, amount, upi_ref, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending Verification')""",
-                        (st.session_state.username, st.session_state.full_name, st.session_state.role,
-                         st.session_state.phone, m_type, str(m_id), m_price, upi_ref_in.strip()))
-                    conn.commit()
-                    conn.close()
-                    st.success("🎉 Submitted! Admin verify করবেন।")
+        item_options = {T(f"👑 FULL ACCESS — সব প্রশ্ন Unlock (₹{full_access_price})", f"👑 FULL ACCESS — All Questions (₹{full_access_price})"): ("FULL_ACCESS", "FULL_ACCESS", full_access_price)}
+        
+        for m in available_items:
+            label = f"[{m[1]}] {m[2]} — ₹{m[3] or 0}"
+            item_options[label] = (m[0], m[1], m[3] or 0)
+        
+        sel_item_label = st.selectbox(T("কোন Item unlock করতে চান?", "Which item to unlock?"), ["-- Select --"] + list(item_options.keys()), key="pay_item_sel")
+        upi_ref_in = st.text_input(T("UPI Transaction ID:", "UPI Transaction ID:"), key="pay_upi_ref")
+        if st.button(T("📤 Submit Payment for Verification", "📤 Submit Payment for Verification"), use_container_width=True, key="pay_submit_btn"):
+            if sel_item_label == "-- Select --" or not upi_ref_in.strip():
+                st.warning(T("⚠️ Select item & enter UPI ref.", "⚠️ Select item & enter UPI ref."))
+            else:
+                m_id, m_type, m_price = item_options[sel_item_label]
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""INSERT INTO payments (username, user_name, user_role, phone, item_type, item_id, amount, upi_ref, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending Verification')""",
+                    (st.session_state.username, st.session_state.full_name, st.session_state.role,
+                     st.session_state.phone, m_type, str(m_id), m_price, upi_ref_in.strip()))
+                conn.commit()
+                conn.close()
+                st.success(T("🎉 Submitted! Admin verify করবেন।", "🎉 Submitted! Admin will verify."))
         
         st.markdown("---")
-        st.markdown("### 📜 Payment History")
+        st.markdown(f"### 📜 {T('Payment History', 'Payment History')}")
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""SELECT id, item_type, item_id, amount, upi_ref, status, timestamp, admin_note
@@ -769,23 +1062,87 @@ else:
         my_pays = cursor.fetchall()
         conn.close()
         if not my_pays:
-            st.info("No payment history.")
+            st.info(T("No payment history.", "No payment history."))
         else:
             for p_id, itype, iid, amt, uref, stat, ts, note in my_pays:
                 color = {"Approved": "🟢", "Pending Verification": "🟡", "Rejected": "🔴"}.get(stat, "⚪")
                 with st.expander(f"{color} #{p_id} — {itype} — ₹{amt} [{stat}]"):
-                    st.markdown(f"**Item ID:** `{iid}`")
+                    st.markdown(f"**{T('Item ID', 'Item ID')}:** `{iid}`")
                     st.markdown(f"**UPI Ref:** `{uref}`")
-                    st.markdown(f"**Date:** {ts}")
+                    st.markdown(f"**{T('Date', 'Date')}:** {ts}")
                     if note:
-                        st.info(f"Note: {note}")
+                        st.info(f"{T('Note', 'Note')}: {note}")
     
     # ========================================================================
     # STUDENT PORTAL
     # ========================================================================
     elif active_view_role == "student":
-        if st_nav == "📖 Practice Center":
-            st.subheader("📖 WBBSE Class 10 Geography Practice Center")
+        
+        # ---------- NEW: DASHBOARD ----------
+        if st_nav in [T("🏠 Dashboard", "🏠 Dashboard")]:
+            st.subheader(T("🏠 Student Dashboard", "🏠 Student Dashboard"))
+            
+            colA, colB, colC = st.columns(3)
+            colA.metric(T("📚 Chapters", "📚 Chapters"), "6")
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM questions")
+            total_q = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM questions WHERE topic_id = 1")
+            ch1_q = cursor.fetchone()[0]
+            conn.close()
+            
+            colB.metric(T("❓ Total Questions", "❓ Total Questions"), total_q)
+            colC.metric(T("📖 Chapter 1 Questions", "📖 Chapter 1 Questions"), ch1_q)
+            
+            is_full = has_full_access(st.session_state.username)
+            if is_full:
+                st.success(T("👑 আপনি Full Access User! সব প্রশ্ন unlocked।", "👑 You have Full Access! All questions unlocked."))
+            else:
+                st.info(T("💡 ₹100 দিয়ে Full Access কিনলে সব প্রশ্ন unlock হবে।", "💡 Buy Full Access for ₹100 to unlock all questions."))
+            
+            st.markdown("---")
+            st.markdown(f"### 🔥 {T('Featured Practice Questions', 'Featured Practice Questions')}")
+            st.caption(T("প্রতিটি chapter থেকে selected প্রশ্ন — practice করুন!", "Selected questions from each chapter — practice now!"))
+            
+            # Show 2 random questions from each chapter
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, name FROM topics ORDER BY id ASC")
+            all_topics = cursor.fetchall()
+            
+            for t_id, t_name in all_topics:
+                cursor.execute("""SELECT id, question_text, question_text_en, marks, is_descriptive, correct_option
+                    FROM questions WHERE topic_id = ? ORDER BY RANDOM() LIMIT 2""", (t_id,))
+                qs = cursor.fetchall()
+                
+                if qs:
+                    st.markdown(f"#### 📖 {t_name}")
+                    for q_id, q_bn, q_en, q_m, is_desc, corr in qs:
+                        q_label = (q_bn if lang == "Bengali" else q_en) or q_bn
+                        # Check if unlocked
+                        unlocked = is_full or user_has_purchase(st.session_state.username, "QUESTION", q_id)
+                        lock_icon = "🔓" if unlocked else "🔒"
+                        
+                        with st.expander(f"{lock_icon} [{q_m}M] {q_label[:100]}..."):
+                            st.markdown(f"**{T('Question', 'Question')}:** {q_label}")
+                            if not unlocked and q_m > 1:
+                                st.warning(T("🔒 এই প্রশ্নের উত্তর দেখতে Full Access কিনুন (₹100)", "🔒 Buy Full Access (₹100) to see this answer"))
+                            else:
+                                if q_m == 1:
+                                    st.info(T("1 mark question — Practice Center এ বিস্তারিত দেখুন", "1 mark question — See details in Practice Center"))
+                                else:
+                                    st.info(T("এই প্রশ্নের সম্পূর্ণ উত্তর Practice Center এ পাবেন", "Full answer available in Practice Center"))
+                    st.markdown("---")
+            
+            cursor.close()
+            conn.close()
+        
+        # ---------- PRACTICE CENTER (REDESIGNED) ----------
+        elif st_nav in [T("📖 Practice Center", "📖 Practice Center")]:
+            st.subheader(T("📖 WBBSE Class 10 Geography Practice Center", "📖 WBBSE Class 10 Geography Practice Center"))
+            
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT id, name FROM topics ORDER BY id ASC")
@@ -794,111 +1151,168 @@ else:
                 conn.close()
                 st.error("⚠️ No chapters.")
                 st.stop()
-            selected_topic_name = st.selectbox("Select Chapter:", list(topic_dict.keys()), key="std_topic_sel")
+            
+            selected_topic_name = st.selectbox(T("Select Chapter:", "Select Chapter:"), list(topic_dict.keys()), key="std_topic_sel")
             target_t_id = topic_dict[selected_topic_name]
             cursor.execute("""SELECT id, question_text, question_text_en, option_a, option_a_en, option_b, option_b_en,
                 option_c, option_c_en, option_d, option_d_en, correct_option, explanation, explanation_en,
-                difficulty, is_descriptive, marks, model_answer, model_answer_en, marking_scheme, marking_scheme_en
+                difficulty, is_descriptive, marks, model_answer, model_answer_en, marking_scheme, marking_scheme_en, q_type
                 FROM questions WHERE topic_id = ?""", (target_t_id,))
             all_questions = cursor.fetchall()
             conn.close()
             
             if not all_questions:
-                st.info("এই chapter এ প্রশ্ন যোগ করা হয়নি।")
+                st.info(T("এই chapter এ প্রশ্ন যোগ করা হয়নি।", "No questions added to this chapter yet."))
             else:
-                q1_list = [q for q in all_questions if q[16] == 1]
+                # Categorize: MCQ / SAQ / 2M / 3M / 5M
+                mcq_list = [q for q in all_questions if q[16] == 1 and (q[3] or q[4])]  # has options
+                saq_list = [q for q in all_questions if q[16] == 1 and not (q[3] or q[4])]  # no options
                 q2_list = [q for q in all_questions if q[16] == 2]
                 q3_list = [q for q in all_questions if q[16] == 3]
                 q5_list = [q for q in all_questions if q[16] == 5 or q[16] > 3]
-                t1, t2, t3, t5 = st.tabs([
-                    f"📁 1 Mark ({len(q1_list)})",
-                    f"📁 2 Marks ({len(q2_list)})",
-                    f"📁 3 Marks ({len(q3_list)})",
-                    f"📁 5 Marks ({len(q5_list)})"
+                
+                # 5 TABS
+                t_mcq, t_saq, t2, t3, t5 = st.tabs([
+                    T(f"📝 MCQ ({len(mcq_list)})", f"📝 MCQ ({len(mcq_list)})"),
+                    T(f"✏️ SAQ ({len(saq_list)})", f"✏️ SAQ ({len(saq_list)})"),
+                    T(f"📘 2 Marks ({len(q2_list)})", f"📘 2 Marks ({len(q2_list)})"),
+                    T(f"📗 3 Marks ({len(q3_list)})", f"📗 3 Marks ({len(q3_list)})"),
+                    T(f"📕 5 Marks ({len(q5_list)})", f"📕 5 Marks ({len(q5_list)})")
                 ])
                 
-                def render_broad(q_list, mark_label):
-                    if not q_list:
-                        st.info(f"No {mark_label} questions.")
-                        return
-                    for idx, q in enumerate(q_list, 1):
-                        (q_id, q_bn, q_en, oa_bn, oa_en, ob_bn, ob_en, oc_bn, oc_en, od_bn, od_en,
-                         corr_opt, expl_bn, expl_en, diff, is_desc, m_val, m_ans_bn, m_ans_en, ms_bn, ms_en) = q
-                        q_label = (q_bn if lang == "Bengali" else q_en) or translate_geo_term(q_bn, lang)
-                        st.markdown(f"""<div class="card-broad">
-                            <span style="background-color: #7c3aed; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">{m_val} Marks</span>
-                            <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
-                        
-                        conn = get_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("""SELECT status, teacher_answer FROM student_doubts 
-                            WHERE student_username = ? AND question_id = ? 
-                            ORDER BY id DESC LIMIT 1""",
-                            (st.session_state.username, q_id))
-                        d_row = cursor.fetchone()
-                        conn.close()
-                        
-                        if d_row and d_row[0] == "Approved" and d_row[1] and d_row[1].strip():
-                            st.success("✅ Solution Unlocked!")
-                            st.markdown(f"**Model Answer:**\n\n{d_row[1]}")
-                            st.download_button("📥 Download Solution", data=d_row[1], file_name=f"Solution_Q{q_id}.txt", key=f"dl_{q_id}")
-                        elif d_row and d_row[0] in ["Pending Admin Assignment", "Assigned to Teacher", "Teacher Submitted (Pending Admin Approval)"]:
-                            st.info(f"⏳ Status: `{d_row[0]}` — অপেক্ষা করুন।")
-                        else:
-                            st.caption("🔒 Model Answer hidden.")
-                            if st.button(f"🙋 Ask Admin for Solution (Q{idx})", key=f"ask_{q_id}", use_container_width=True):
-                                conn = get_connection()
-                                cursor = conn.cursor()
-                                cursor.execute("""SELECT id FROM student_doubts 
-                                    WHERE student_username = ? AND question_id = ?
-                                    AND status IN ('Pending Admin Assignment', 'Assigned to Teacher', 'Teacher Submitted (Pending Admin Approval)', 'Approved')""",
-                                    (st.session_state.username, q_id))
-                                exists = cursor.fetchone()
-                                if exists:
-                                    st.warning("⚠️ Already requested!")
-                                else:
-                                    cursor.execute("""INSERT INTO student_doubts (student_username, student_name, question_id, status)
-                                        VALUES (?, ?, ?, 'Pending Admin Assignment')""",
-                                        (st.session_state.username, st.session_state.full_name, q_id))
-                                    conn.commit()
-                                    st.success("🎉 Request sent to Admin!")
-                                    st.rerun()
-                                conn.close()
-                        st.markdown("<hr/>", unsafe_allow_html=True)
+                is_full = has_full_access(st.session_state.username)
                 
-                with t1:
-                    if not q1_list:
-                        st.info("No 1-mark questions.")
+                def render_question_ask_button(q_id, idx, m_val):
+                    """Renders Ask Admin button for broad questions"""
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""SELECT status, teacher_answer FROM student_doubts 
+                        WHERE student_username = ? AND question_id = ? 
+                        ORDER BY id DESC LIMIT 1""",
+                        (st.session_state.username, q_id))
+                    d_row = cursor.fetchone()
+                    conn.close()
+                    
+                    if d_row and d_row[0] == "Approved" and d_row[1] and d_row[1].strip():
+                        st.success(T("✅ Solution Unlocked!", "✅ Solution Unlocked!"))
+                        st.markdown(f"**{T('Model Answer', 'Model Answer')}:**\n\n{d_row[1]}")
+                        st.download_button(T("📥 Download Solution", "📥 Download Solution"), data=d_row[1], file_name=f"Solution_Q{q_id}.txt", key=f"dl_{q_id}")
+                    elif d_row and d_row[0] in ["Pending Admin Assignment", "Assigned to Teacher", "Teacher Submitted (Pending Admin Approval)"]:
+                        st.info(f"⏳ {T('Status', 'Status')}: `{d_row[0]}` — {T('অপেক্ষা করুন।', 'Please wait.')}")
                     else:
-                        for idx, q in enumerate(q1_list, 1):
+                        st.caption(T("🔒 Model Answer hidden.", "🔒 Model Answer hidden."))
+                        if st.button(T(f"🙋 Ask Admin for Solution (Q{idx})", f"🙋 Ask Admin for Solution (Q{idx})"), key=f"ask_{q_id}", use_container_width=True):
+                            conn = get_connection()
+                            cursor = conn.cursor()
+                            cursor.execute("""SELECT id FROM student_doubts 
+                                WHERE student_username = ? AND question_id = ?
+                                AND status IN ('Pending Admin Assignment', 'Assigned to Teacher', 'Teacher Submitted (Pending Admin Approval)', 'Approved')""",
+                                (st.session_state.username, q_id))
+                            exists = cursor.fetchone()
+                            if exists:
+                                st.warning(T("⚠️ Already requested!", "⚠️ Already requested!"))
+                            else:
+                                cursor.execute("""INSERT INTO student_doubts (student_username, student_name, question_id, status)
+                                    VALUES (?, ?, ?, 'Pending Admin Assignment')""",
+                                    (st.session_state.username, st.session_state.full_name, q_id))
+                                conn.commit()
+                                st.success(T("🎉 Request sent to Admin!", "🎉 Request sent to Admin!"))
+                                st.rerun()
+                            conn.close()
+                
+                # ===== MCQ TAB =====
+                with t_mcq:
+                    if not mcq_list:
+                        st.info(T("No MCQ questions.", "No MCQ questions."))
+                    else:
+                        for idx, q in enumerate(mcq_list, 1):
                             (q_id, q_bn, q_en, oa_bn, oa_en, ob_bn, ob_en, oc_bn, oc_en, od_bn, od_en,
-                             corr_opt, expl_bn, expl_en, diff, is_desc, m_val, m_ans_bn, m_ans_en, ms_bn, ms_en) = q
+                             corr_opt, expl_bn, expl_en, diff, is_desc, m_val, m_ans_bn, m_ans_en, ms_bn, ms_en, qtype) = q
                             q_label = (q_bn if lang == "Bengali" else q_en) or translate_geo_term(q_bn, lang)
                             st.markdown(f"""<div class="card-short">
-                                <span style="background-color: #2563eb; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">1 Mark</span>
+                                <span style="background-color: #2563eb; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">MCQ</span>
                                 <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
-                            if oa_bn or oa_en:
-                                opts = [
-                                    f"A) {(oa_bn if lang == 'Bengali' else oa_en) or translate_geo_term(oa_bn, lang)}",
-                                    f"B) {(ob_bn if lang == 'Bengali' else ob_en) or translate_geo_term(ob_bn, lang)}",
-                                    f"C) {(oc_bn if lang == 'Bengali' else oc_en) or translate_geo_term(oc_bn, lang)}",
-                                    f"D) {(od_bn if lang == 'Bengali' else od_en) or translate_geo_term(od_bn, lang)}"
-                                ]
-                                user_ans = st.radio(f"Select Q{idx}:", opts, index=None, key=f"std_mcq_{q_id}")
-                                if user_ans:
-                                    if user_ans[0] == corr_opt:
-                                        st.success(f"✅ Correct!")
-                                    else:
-                                        st.error(f"❌ Correct: Option {corr_opt}")
-                                    st.info(f"💡 {(expl_bn if lang == 'Bengali' else expl_en) or translate_geo_term(expl_bn, lang)}")
+                            
+                            opts = [
+                                f"A) {(oa_bn if lang == 'Bengali' else oa_en) or translate_geo_term(oa_bn, lang)}",
+                                f"B) {(ob_bn if lang == 'Bengali' else ob_en) or translate_geo_term(ob_bn, lang)}",
+                                f"C) {(oc_bn if lang == 'Bengali' else oc_en) or translate_geo_term(oc_bn, lang)}",
+                                f"D) {(od_bn if lang == 'Bengali' else od_en) or translate_geo_term(od_bn, lang)}"
+                            ]
+                            user_ans = st.radio(T(f"Select Q{idx}:", f"Select Q{idx}:"), opts, index=None, key=f"std_mcq_{q_id}")
+                            if user_ans:
+                                if user_ans[0] == corr_opt:
+                                    st.success(T("✅ Correct!", "✅ Correct!"))
+                                else:
+                                    st.error(f"❌ {T('Correct Answer', 'Correct Answer')}: {corr_opt}")
+                                st.info(f"💡 {(expl_bn if lang == 'Bengali' else expl_en) or translate_geo_term(expl_bn, lang)}")
                             st.markdown("<hr/>", unsafe_allow_html=True)
                 
-                with t2: render_broad(q2_list, "2 Marks")
-                with t3: render_broad(q3_list, "3 Marks")
-                with t5: render_broad(q5_list, "5 Marks")
+                # ===== SAQ TAB =====
+                with t_saq:
+                    if not saq_list:
+                        st.info(T("No SAQ questions.", "No SAQ questions."))
+                    else:
+                        for idx, q in enumerate(saq_list, 1):
+                            (q_id, q_bn, q_en, oa_bn, oa_en, ob_bn, ob_en, oc_bn, oc_en, od_bn, od_en,
+                             corr_opt, expl_bn, expl_en, diff, is_desc, m_val, m_ans_bn, m_ans_en, ms_bn, ms_en, qtype) = q
+                            q_label = (q_bn if lang == "Bengali" else q_en) or translate_geo_term(q_bn, lang)
+                            st.markdown(f"""<div class="card-short">
+                                <span style="background-color: #059669; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">SAQ</span>
+                                <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
+                            with st.expander(T("👁️ View Answer", "👁️ View Answer")):
+                                st.markdown(f"**{T('Answer', 'Answer')}:** {corr_opt}")
+                                if expl_bn or expl_en:
+                                    st.markdown(f"**{T('Explanation', 'Explanation')}:** {(expl_bn if lang == 'Bengali' else expl_en) or translate_geo_term(expl_bn, lang)}")
+                            st.markdown("<hr/>", unsafe_allow_html=True)
+                
+                # ===== 2 MARKS TAB =====
+                with t2:
+                    if not q2_list:
+                        st.info(T("No 2-marks questions.", "No 2-marks questions."))
+                    else:
+                        for idx, q in enumerate(q2_list, 1):
+                            (q_id, q_bn, q_en, oa_bn, oa_en, ob_bn, ob_en, oc_bn, oc_en, od_bn, od_en,
+                             corr_opt, expl_bn, expl_en, diff, is_desc, m_val, m_ans_bn, m_ans_en, ms_bn, ms_en, qtype) = q
+                            q_label = (q_bn if lang == "Bengali" else q_en) or translate_geo_term(q_bn, lang)
+                            st.markdown(f"""<div class="card-broad">
+                                <span style="background-color: #7c3aed; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">2 Marks</span>
+                                <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
+                            render_question_ask_button(q_id, idx, m_val)
+                            st.markdown("<hr/>", unsafe_allow_html=True)
+                
+                # ===== 3 MARKS TAB =====
+                with t3:
+                    if not q3_list:
+                        st.info(T("No 3-marks questions.", "No 3-marks questions."))
+                    else:
+                        for idx, q in enumerate(q3_list, 1):
+                            (q_id, q_bn, q_en, oa_bn, oa_en, ob_bn, ob_en, oc_bn, oc_en, od_bn, od_en,
+                             corr_opt, expl_bn, expl_en, diff, is_desc, m_val, m_ans_bn, m_ans_en, ms_bn, ms_en, qtype) = q
+                            q_label = (q_bn if lang == "Bengali" else q_en) or translate_geo_term(q_bn, lang)
+                            st.markdown(f"""<div class="card-broad" style="border-left-color: #16a34a;">
+                                <span style="background-color: #16a34a; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">3 Marks</span>
+                                <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
+                            render_question_ask_button(q_id, idx, m_val)
+                            st.markdown("<hr/>", unsafe_allow_html=True)
+                
+                # ===== 5 MARKS TAB =====
+                with t5:
+                    if not q5_list:
+                        st.info(T("No 5-marks questions.", "No 5-marks questions."))
+                    else:
+                        for idx, q in enumerate(q5_list, 1):
+                            (q_id, q_bn, q_en, oa_bn, oa_en, ob_bn, ob_en, oc_bn, oc_en, od_bn, od_en,
+                             corr_opt, expl_bn, expl_en, diff, is_desc, m_val, m_ans_bn, m_ans_en, ms_bn, ms_en, qtype) = q
+                            q_label = (q_bn if lang == "Bengali" else q_en) or translate_geo_term(q_bn, lang)
+                            st.markdown(f"""<div class="card-broad" style="border-left-color: #dc2626;">
+                                <span style="background-color: #dc2626; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; float: right;">5 Marks</span>
+                                <h4>Q{idx}. {q_label}</h4></div>""", unsafe_allow_html=True)
+                            render_question_ask_button(q_id, idx, m_val)
+                            st.markdown("<hr/>", unsafe_allow_html=True)
         
-        elif st_nav == "❓ My Help / Doubt Requests":
-            st.subheader("❓ My Doubt Requests & Unlocked Solutions")
+        elif st_nav in [T("❓ My Help / Doubt Requests", "❓ My Help / Doubt Requests")]:
+            st.subheader(T("❓ My Doubt Requests & Unlocked Solutions", "❓ My Doubt Requests & Unlocked Solutions"))
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("""SELECT d.id, q.question_text, q.marks, d.status, d.teacher_answer, d.timestamp
@@ -907,50 +1321,50 @@ else:
             my_doubts = cursor.fetchall()
             conn.close()
             if not my_doubts:
-                st.info("এখনো কোনো doubt request নেই। Practice Center এ '🙋 Ask Admin' button click করুন।")
+                st.info(T("এখনো কোনো doubt request নেই।", "No doubt requests yet."))
             else:
                 for d_id, q_txt, q_m, status, t_ans, t_stamp in my_doubts:
                     color = "🟢" if status == "Approved" else "🟡"
                     with st.expander(f"{color} Doubt #{d_id} [{q_m}M] — {status} ({t_stamp})"):
-                        st.markdown(f"**Question:** {q_txt}")
+                        st.markdown(f"**{T('Question', 'Question')}:** {q_txt}")
                         if status == "Approved" and t_ans and t_ans.strip():
-                            st.success(f"✅ Solution Unlocked!\n\n{t_ans}")
-                            st.download_button("📥 Download", data=t_ans, file_name=f"Doubt_{d_id}.txt", key=f"d_{d_id}")
+                            st.success(f"✅ {T('Solution Unlocked', 'Solution Unlocked')}!\n\n{t_ans}")
+                            st.download_button(T("📥 Download", "📥 Download"), data=t_ans, file_name=f"Doubt_{d_id}.txt", key=f"d_{d_id}")
                         elif status == "Pending Admin Assignment":
-                            st.info("⏳ Admin এর কাছে request পাঠানো হয়েছে।")
+                            st.info(T("⏳ Admin এর কাছে request পাঠানো হয়েছে।", "⏳ Request sent to Admin."))
                         elif status == "Assigned to Teacher":
-                            st.info("⏳ Teacher কে assign করা হয়েছে।")
+                            st.info(T("⏳ Teacher কে assign করা হয়েছে।", "⏳ Assigned to Teacher."))
                         elif status == "Teacher Submitted (Pending Admin Approval)":
-                            st.info("⏳ Teacher answer দিয়েছেন, Admin approval এর অপেক্ষায়।")
+                            st.info(T("⏳ Teacher answer দিয়েছেন, Admin approval এর অপেক্ষায়।", "⏳ Teacher answered, awaiting admin approval."))
         
-        elif st_nav == "📄 Mock Tests & Suggestions":
-            st.subheader("📄 Mock Tests & Suggestions Portal")
+        elif st_nav in [T("📄 Mock Tests & Suggestions", "📄 Mock Tests & Suggestions")]:
+            st.subheader(T("📄 Mock Tests & Suggestions Portal", "📄 Mock Tests & Suggestions Portal"))
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT id, test_type, code_num, file_name, file_data, uploader, price, timestamp FROM mock_tests WHERE is_published = 1 ORDER BY id DESC")
             mocks = cursor.fetchall()
             conn.close()
             if not mocks:
-                st.info("এখনো কোনো mock test upload হয়নি।")
+                st.info(T("এখনো কোনো mock test upload হয়নি।", "No mock tests uploaded yet."))
             else:
                 for m_id, t_type, c_num, f_name, f_data, uploader, price, t_stamp in mocks:
                     has_paid = user_has_purchase(st.session_state.username, t_type, m_id)
                     st.markdown(f"### 📄 `{c_num}` — {t_type}")
                     st.caption(f"Uploader: {uploader} | Date: {t_stamp} | Price: ₹{price or 0}")
                     if has_paid:
-                        st.success("✅ Unlocked!")
+                        st.success(T("✅ Unlocked!", "✅ Unlocked!"))
                         if f_data:
-                            st.download_button(f"📥 Download {c_num}", data=f_data, file_name=f_name, key=f"dl_{m_id}")
+                            st.download_button(T(f"📥 Download {c_num}", f"📥 Download {c_num}"), data=f_data, file_name=f_name, key=f"dl_{m_id}")
                     else:
                         st.markdown(f"""<div class="lock-box">
-                            🔒 <strong>Locked!</strong> এই paper unlock করতে ₹{price or 0} payment করুন।<br/>
-                            <em>Pricing & Payment</em> page এ যান।
+                            🔒 <strong>{T('Locked!', 'Locked!')}</strong> {T(f'এই paper unlock করতে ₹{price or 0} payment করুন।', f'Pay ₹{price or 0} to unlock.')}<br/>
+                            <em>{T('Pricing & Payment page এ যান।', 'Go to Pricing & Payment page.')}</em>
                         </div>""", unsafe_allow_html=True)
                     st.markdown("---")
         
-        elif st_nav == "📝 My Exam Submissions":
-            st.subheader("📝 My Exam Submissions")
-            st.info("💡 প্রথমে Mock Test unlock করুন, তারপর handwritten answer sheet upload করুন।")
+        elif st_nav in [T("📝 My Exam Submissions", "📝 My Exam Submissions")]:
+            st.subheader(T("📝 My Exam Submissions", "📝 My Exam Submissions"))
+            st.info(T("💡 প্রথমে Mock Test unlock করুন, তারপর handwritten answer sheet upload করুন।", "💡 First unlock a Mock Test, then upload your handwritten answer sheet."))
             
             conn = get_connection()
             cursor = conn.cursor()
@@ -961,12 +1375,12 @@ else:
             unlocked = [(m[0], m[1], m[2]) for m in my_tests if user_has_purchase(st.session_state.username, m[1], m[0])]
             
             if not unlocked:
-                st.warning("⚠️ প্রথমে Mock Test unlock করুন।")
+                st.warning(T("⚠️ প্রথমে Mock Test unlock করুন।", "⚠️ First unlock a Mock Test."))
             else:
                 test_opts = {f"[{t[1]}] {t[2]}": t[0] for t in unlocked}
-                sel_test = st.selectbox("কোন Exam এর Answer Sheet submit করবেন?", list(test_opts.keys()), key="sub_exam_sel")
-                sub_file = st.file_uploader("Answer Sheet Upload (.pdf / .jpg / .png)", type=["pdf", "jpg", "jpeg", "png"], key="sub_answer_file")
-                if st.button("📤 Submit Answer Sheet", use_container_width=True, key="sub_ans_btn"):
+                sel_test = st.selectbox(T("কোন Exam এর Answer Sheet submit করবেন?", "Which exam's answer sheet to submit?"), list(test_opts.keys()), key="sub_exam_sel")
+                sub_file = st.file_uploader(T("Answer Sheet Upload (.pdf / .jpg / .png)", "Answer Sheet Upload (.pdf / .jpg / .png)"), type=["pdf", "jpg", "jpeg", "png"], key="sub_answer_file")
+                if st.button(T("📤 Submit Answer Sheet", "📤 Submit Answer Sheet"), use_container_width=True, key="sub_ans_btn"):
                     if sub_file is not None:
                         selected_id = test_opts[sel_test]
                         selected_type = sel_test.split("]")[0].strip("[")
@@ -979,13 +1393,13 @@ else:
                              sel_test, sub_file.name, f_bytes))
                         conn.commit()
                         conn.close()
-                        st.success("🎉 Submitted! ৫ দিনের মধ্যে corrected copy return হবে।")
+                        st.success(T("🎉 Submitted! ৫ দিনের মধ্যে corrected copy return হবে।", "🎉 Submitted! Corrected copy will return within 5 days."))
                         st.balloons()
                     else:
-                        st.warning("⚠️ File upload করুন।")
+                        st.warning(T("⚠️ File upload করুন।", "⚠️ Please upload a file."))
             
             st.markdown("---")
-            st.markdown("### 📬 My Submissions")
+            st.markdown(f"### 📬 {T('My Submissions', 'My Submissions')}")
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("""SELECT id, exam_code, answer_file_name, submitted_at, status, corrected_file_name, corrected_file_data, corrected_at, admin_note
@@ -994,28 +1408,28 @@ else:
             conn.close()
             
             if not my_submissions:
-                st.info("No submissions yet.")
+                st.info(T("No submissions yet.", "No submissions yet."))
             else:
                 for s_id, ecode, afname, sub_at, stat, cfname, cfdata, cat, note in my_submissions:
                     color = "🟢" if stat == "Checked & Returned" else "🟡"
                     with st.expander(f"{color} Submission #{s_id} — {ecode} — {stat}"):
-                        st.markdown(f"**Submitted:** {sub_at}")
-                        st.markdown(f"**File:** `{afname}`")
+                        st.markdown(f"**{T('Submitted', 'Submitted')}:** {sub_at}")
+                        st.markdown(f"**{T('File', 'File')}:** `{afname}`")
                         if note:
-                            st.info(f"Admin Note: {note}")
+                            st.info(f"{T('Admin Note', 'Admin Note')}: {note}")
                         if stat == "Checked & Returned" and cfdata:
-                            st.success(f"✅ Corrected Copy Available! ({cat})")
-                            st.download_button("📥 Download Corrected Copy", data=cfdata, file_name=cfname, key=f"dl_corr_{s_id}")
+                            st.success(T(f"✅ Corrected Copy Available! ({cat})", f"✅ Corrected Copy Available! ({cat})"))
+                            st.download_button(T("📥 Download Corrected Copy", "📥 Download Corrected Copy"), data=cfdata, file_name=cfname, key=f"dl_corr_{s_id}")
                         else:
-                            st.info("⏳ Correction এর অপেক্ষায়।")
+                            st.info(T("⏳ Correction এর অপেক্ষায়।", "⏳ Awaiting correction."))
     
     # ========================================================================
     # TEACHER PORTAL
     # ========================================================================
     elif active_view_role == "teacher":
-        if st_nav == "📥 Assigned Student Doubts":
-            st.subheader("📥 Doubts Assigned to You")
-            st.info("💡 Admin আপনাকে যে doubts assign করেছেন সেগুলো এখানে দেখবেন। Solution লিখে submit করলে Admin approve করবেন, তারপর student দেখতে পাবে।")
+        if st_nav in [T("📥 Assigned Student Doubts", "📥 Assigned Student Doubts")]:
+            st.subheader(T("📥 Doubts Assigned to You", "📥 Doubts Assigned to You"))
+            st.info(T("💡 Admin আপনাকে যে doubts assign করেছেন সেগুলো এখানে দেখবেন।", "💡 Doubts assigned by Admin appear here."))
             
             conn = get_connection()
             cursor = conn.cursor()
@@ -1026,21 +1440,21 @@ else:
             conn.close()
             
             if not my_doubts:
-                st.info("এখনো কোনো doubt assign হয়নি।")
+                st.info(T("এখনো কোনো doubt assign হয়নি।", "No doubts assigned yet."))
             else:
                 for d_id, s_name, q_txt, q_m, status, t_ans in my_doubts:
                     st.markdown(f"""<div class="assigned-card">
                         <strong>📌 Doubt #{d_id} [{q_m} Marks] — Student: {s_name}</strong><br/>
                         <small>Status: {status}</small>
                     </div>""", unsafe_allow_html=True)
-                    st.markdown(f"**Question:** {q_txt}")
+                    st.markdown(f"**{T('Question', 'Question')}:** {q_txt}")
                     
                     if status == "Teacher Submitted (Pending Admin Approval)":
-                        st.success("✅ আপনি submit করেছেন! Admin approval এর অপেক্ষায়।")
-                        st.markdown(f"**Your Submitted Answer:**\n{t_ans}")
+                        st.success(T("✅ আপনি submit করেছেন! Admin approval এর অপেক্ষায়।", "✅ Submitted! Awaiting admin approval."))
+                        st.markdown(f"**{T('Your Submitted Answer', 'Your Submitted Answer')}:**\n{t_ans}")
                     else:
-                        sol_in = st.text_area(f"Solution লিখুন:", value=t_ans, key=f"t_sol_{d_id}", height=180)
-                        if st.button(f"📤 Submit to Admin for Approval", key=f"t_btn_{d_id}", use_container_width=True):
+                        sol_in = st.text_area(T("Solution লিখুন:", "Write Solution:"), value=t_ans, key=f"t_sol_{d_id}", height=180)
+                        if st.button(T("📤 Submit to Admin for Approval", "📤 Submit to Admin for Approval"), key=f"t_btn_{d_id}", use_container_width=True):
                             if sol_in.strip():
                                 conn = get_connection()
                                 cursor = conn.cursor()
@@ -1049,14 +1463,14 @@ else:
                                     WHERE id = ?""", (sol_in.strip(), d_id))
                                 conn.commit()
                                 conn.close()
-                                st.success("🎉 Admin এর কাছে পাঠানো হয়েছে!")
+                                st.success(T("🎉 Admin এর কাছে পাঠানো হয়েছে!", "🎉 Sent to Admin!"))
                                 st.rerun()
                             else:
-                                st.warning("⚠️ Solution লিখুন।")
+                                st.warning(T("⚠️ Solution লিখুন।", "⚠️ Please write solution."))
                     st.markdown("---")
         
-        elif st_nav == "📖 Question Bank Manager":
-            st.subheader("📖 Question Bank Manager")
+        elif st_nav in [T("📖 Question Bank Manager", "📖 Question Bank Manager")]:
+            st.subheader(T("📖 Question Bank Manager", "📖 Question Bank Manager"))
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT id, name FROM topics ORDER BY id ASC")
@@ -1066,47 +1480,51 @@ else:
                 st.error("No chapters.")
                 st.stop()
             
-            sel_topic_name = st.selectbox("Chapter:", list(topic_dict.keys()), key="tch_top")
+            sel_topic_name = st.selectbox(T("Chapter:", "Chapter:"), list(topic_dict.keys()), key="tch_top")
             target_t_id = topic_dict[sel_topic_name]
             
-            tab_man, tab_dups, tab_del = st.tabs(["➕ Manual Upload", "🔍 Duplicate Remover", "📖 Browse & Delete"])
+            tab_man, tab_dups, tab_del = st.tabs([
+                T("➕ Manual Upload", "➕ Manual Upload"),
+                T("🔍 Duplicate Remover", "🔍 Duplicate Remover"),
+                T("📖 Browse & Delete", "📖 Browse & Delete")
+            ])
             
             with tab_man:
-                st.markdown("### ➕ Manual Question Upload")
-                q_text_bn = st.text_area("Question:", key="tch_q_bn")
-                q_marks = st.selectbox("Marks:", [1, 2, 3, 5], key="tch_q_marks")
+                st.markdown(T("### ➕ Manual Question Upload", "### ➕ Manual Question Upload"))
+                q_text_bn = st.text_area(T("Question:", "Question:"), key="tch_q_bn")
+                q_marks = st.selectbox(T("Marks:", "Marks:"), [1, 2, 3, 5], key="tch_q_marks")
                 if q_text_bn.strip():
                     match, ratio = check_duplicate_question(q_text_bn, target_t_id)
                     if match:
-                        st.warning(f"⚠️ Duplicate ({ratio*100:.1f}%): Q_ID #{match[0]}")
+                        st.warning(f"⚠️ {T('Duplicate', 'Duplicate')} ({ratio*100:.1f}%): Q_ID #{match[0]}")
                 if q_marks == 1:
                     col1, col2 = st.columns(2)
                     oa = col1.text_input("A:", key="tch_oa")
                     ob = col2.text_input("B:", key="tch_ob")
                     oc = col1.text_input("C:", key="tch_oc")
                     od = col2.text_input("D:", key="tch_od")
-                    corr_opt = st.selectbox("Correct:", ["A", "B", "C", "D"], key="tch_co")
-                    expl = st.text_area("Explanation:", key="tch_ex")
-                    if st.button("Save MCQ", key="tch_save_mcq"):
+                    corr_opt = st.selectbox(T("Correct:", "Correct:"), ["A", "B", "C", "D"], key="tch_co")
+                    expl = st.text_area(T("Explanation:", "Explanation:"), key="tch_ex")
+                    if st.button(T("Save MCQ", "Save MCQ"), key="tch_save_mcq"):
                         if q_text_bn and oa:
                             conn = get_connection()
                             cursor = conn.cursor()
-                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', 0, 1)""",
+                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', 0, 1, 'MCQ')""",
                                 (target_t_id, q_text_bn, translate_geo_term(q_text_bn, "English"), oa, ob, oc, od, corr_opt, expl))
                             conn.commit()
                             conn.close()
                             st.success("✅ Added!")
                             st.rerun()
                 else:
-                    m_ans = st.text_area(f"Model Answer ({q_marks}M):", key="tch_ma")
-                    m_sch = st.text_area("Marking Scheme:", key="tch_ms")
-                    if st.button("Save Broad Question", key="tch_save_broad"):
+                    m_ans = st.text_area(T(f"Model Answer ({q_marks}M):", f"Model Answer ({q_marks}M):"), key="tch_ma")
+                    m_sch = st.text_area(T("Marking Scheme:", "Marking Scheme:"), key="tch_ms")
+                    if st.button(T("Save Broad Question", "Save Broad Question"), key="tch_save_broad"):
                         if q_text_bn:
                             conn = get_connection()
                             cursor = conn.cursor()
-                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, marking_scheme)
-                                VALUES (?, ?, ?, 'Hard', 1, ?, ?, ?)""",
+                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
+                                VALUES (?, ?, ?, 'Hard', 1, ?, ?, ?, 'Broad')""",
                                 (target_t_id, q_text_bn, translate_geo_term(q_text_bn, "English"), q_marks, m_ans, m_sch))
                             conn.commit()
                             conn.close()
@@ -1114,15 +1532,15 @@ else:
                             st.rerun()
             
             with tab_dups:
-                st.markdown("### 🔍 Duplicate Remover")
-                if st.button("🔍 Scan", key="tch_scan"):
+                st.markdown(T("### 🔍 Duplicate Remover", "### 🔍 Duplicate Remover"))
+                if st.button(T("🔍 Scan", "🔍 Scan"), key="tch_scan"):
                     conn = get_connection()
                     cursor = conn.cursor()
                     cursor.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = ? ORDER BY id ASC", (target_t_id,))
                     all_q = cursor.fetchall()
                     conn.close()
                     if len(all_q) < 2:
-                        st.warning("২টি প্রশ্ন লাগবে।")
+                        st.warning(T("২টি প্রশ্ন লাগবে।", "Need at least 2 questions."))
                     else:
                         import difflib
                         groups = []
@@ -1141,12 +1559,12 @@ else:
                                 processed.add(all_q[i][0])
                                 groups.append(grp)
                         if not groups:
-                            st.success("🎉 No duplicates!")
+                            st.success(T("🎉 No duplicates!", "🎉 No duplicates!"))
                         else:
-                            st.warning(f"⚠️ {len(groups)} Duplicate Groups!")
+                            st.warning(f"⚠️ {len(groups)} {T('Duplicate Groups', 'Duplicate Groups')}!")
                             for gi, grp in enumerate(groups, 1):
                                 st.markdown(f"#### Group #{gi}")
-                                keep_id = st.radio(f"Keep?", [q[0] for q in grp],
+                                keep_id = st.radio(T("Keep?", "Keep?"), [q[0] for q in grp],
                                     format_func=lambda x: next(f"#{q[0]} [{q[2]}M]: {q[1][:80]}" for q in grp if q[0] == x),
                                     key=f"keep_{gi}_tch")
                                 for q in grp:
@@ -1173,7 +1591,7 @@ else:
                 q_rows = cursor.fetchall()
                 conn.close()
                 if not q_rows:
-                    st.info("No questions.")
+                    st.info(T("No questions.", "No questions."))
                 else:
                     for q_id, q_txt, q_m in q_rows:
                         c1, c2 = st.columns([5, 1])
@@ -1186,9 +1604,9 @@ else:
                             conn.close()
                             st.rerun()
         
-        elif st_nav == "📝 Check Assigned Answer Sheets":
-            st.subheader("📝 Check Assigned Answer Sheets")
-            st.info("💡 Admin আপনাকে specific student এর খাতা check করতে assign করেছেন। Download করে নিজে marking করে সঠিক copy upload করুন।")
+        elif st_nav in [T("📝 Check Assigned Answer Sheets", "📝 Check Assigned Answer Sheets")]:
+            st.subheader(T("📝 Check Assigned Answer Sheets", "📝 Check Assigned Answer Sheets"))
+            st.info(T("💡 Admin আপনাকে assign করেছেন।", "💡 Assigned by Admin."))
             
             conn = get_connection()
             cursor = conn.cursor()
@@ -1200,7 +1618,7 @@ else:
             conn.close()
             
             if not subs:
-                st.info("📭 এখনো কোনো খাতা check করার জন্য assign হয়নি।")
+                st.info(T("📭 এখনো কোনো খাতা check করার জন্য assign হয়নি।", "📭 No answer sheets assigned yet."))
             else:
                 for s_id, s_name, ecode, afname, afdata, sub_at, stat, tcfname in subs:
                     st.markdown(f"""<div class="assigned-card">
@@ -1209,15 +1627,15 @@ else:
                     </div>""", unsafe_allow_html=True)
                     
                     if afdata:
-                        st.download_button("📥 Download Student's Answer Sheet", data=afdata, file_name=afname, key=f"tch_dl_{s_id}", use_container_width=True)
+                        st.download_button(T("📥 Download Student's Answer Sheet", "📥 Download Student's Answer Sheet"), data=afdata, file_name=afname, key=f"tch_dl_{s_id}", use_container_width=True)
                     
                     if stat == "Under Check":
-                        st.markdown("#### ✍️ Check করে Corrected Copy Upload করুন")
-                        corr_file = st.file_uploader("Corrected Answer Sheet (.pdf / .jpg / .png)", 
+                        st.markdown(T("#### ✍️ Check করে Corrected Copy Upload করুন", "#### ✍️ Check and Upload Corrected Copy"))
+                        corr_file = st.file_uploader(T("Corrected Answer Sheet (.pdf / .jpg / .png)", "Corrected Answer Sheet (.pdf / .jpg / .png)"), 
                                                      type=["pdf", "jpg", "jpeg", "png"], key=f"tch_corr_{s_id}")
-                        tch_note = st.text_area("Note for Admin (optional):", key=f"tch_note_{s_id}")
+                        tch_note = st.text_area(T("Note for Admin (optional):", "Note for Admin (optional):"), key=f"tch_note_{s_id}")
                         
-                        if st.button("📤 Submit to Admin", key=f"tch_sub_{s_id}", use_container_width=True):
+                        if st.button(T("📤 Submit to Admin", "📤 Submit to Admin"), key=f"tch_sub_{s_id}", use_container_width=True):
                             if corr_file is not None:
                                 cf_bytes = corr_file.getvalue()
                                 conn = get_connection()
@@ -1230,35 +1648,33 @@ else:
                                     (corr_file.name, cf_bytes, tch_note.strip(), s_id))
                                 conn.commit()
                                 conn.close()
-                                st.success("🎉 Admin এর কাছে পাঠানো হয়েছে!")
+                                st.success(T("🎉 Admin এর কাছে পাঠানো হয়েছে!", "🎉 Sent to Admin!"))
                                 st.rerun()
                             else:
-                                st.warning("⚠️ File upload করুন।")
+                                st.warning(T("⚠️ File upload করুন।", "⚠️ Please upload file."))
                     else:
-                        st.success("✅ আপনি submit করেছেন! Admin review এর অপেক্ষায়।")
+                        st.success(T("✅ আপনি submit করেছেন! Admin review এর অপেক্ষায়।", "✅ Submitted! Awaiting Admin review."))
                     st.markdown("---")
         
-        elif st_nav == "📤 Send Suggestions to Admin":
-            st.subheader("📤 Send Your Suggestions/Mock Tests to Admin")
-            st.markdown("""
+        elif st_nav in [T("📤 Send Suggestions to Admin", "📤 Send Suggestions to Admin")]:
+            st.subheader(T("📤 Send Your Suggestions/Mock Tests to Admin", "📤 Send Your Suggestions/Mock Tests to Admin"))
+            st.markdown(f"""
                 <div style="background:#cffafe; border-left:5px solid #0891b2; padding:18px; border-radius:10px; margin-bottom:20px;">
-                <h4>💡 শিক্ষকদের জন্য বিশেষ সুবিধা</h4>
-                <p>আপনি নিজে যে Mock Test বা Suggestions তৈরি করেছেন সেটা Admin এর কাছে পাঠান। Shawon Sir review করে approve করলে সেটা সব student দেখতে পাবে এবং আপনার নাম credit হিসেবে থাকবে।</p>
+                <h4 style="color:#155e75 !important;">💡 {T('শিক্ষকদের জন্য বিশেষ সুবিধা', 'Special Feature for Teachers')}</h4>
+                <p style="color:#0f172a !important;">{T('আপনি নিজে যে Mock Test বা Suggestions তৈরি করেছেন সেটা Admin এর কাছে পাঠান।', 'Send your own Mock Test or Suggestions to Admin. Shawon Sir will review and publish.')}</p>
                 </div>
             """, unsafe_allow_html=True)
             
             with st.form("teacher_submit_form"):
-                sub_type = st.selectbox("Type:", [
-                    "Chapter Wise Mock Test",
-                    "Final Mock Test",
-                    "Board Suggestions"
+                sub_type = st.selectbox(T("Type:", "Type:"), [
+                    "Chapter Wise Mock Test", "Final Mock Test", "Board Suggestions"
                 ], key="ts_type")
-                sub_title = st.text_input("Title / Description:", placeholder="যেমন: অধ্যায় ২ - বায়ুমণ্ডল Mock Test", key="ts_title")
-                sub_desc = st.text_area("বিস্তারিত বিবরণ (Optional):", height=120, key="ts_desc")
-                sub_price_sug = st.number_input("Suggested Price (₹):", min_value=0, value=0, step=1, key="ts_price")
-                sub_file = st.file_uploader("File Upload (.pdf / .docx)", type=["pdf", "docx"], key="ts_file")
+                sub_title = st.text_input(T("Title / Description:", "Title / Description:"), key="ts_title")
+                sub_desc = st.text_area(T("বিস্তারিত বিবরণ (Optional):", "Details (Optional):"), height=120, key="ts_desc")
+                sub_price_sug = st.number_input(T("Suggested Price (₹):", "Suggested Price (₹):"), min_value=0, value=0, step=1, key="ts_price")
+                sub_file = st.file_uploader(T("File Upload (.pdf / .docx)", "File Upload (.pdf / .docx)"), type=["pdf", "docx"], key="ts_file")
                 
-                if st.form_submit_button("📤 Send to Admin", use_container_width=True):
+                if st.form_submit_button(T("📤 Send to Admin", "📤 Send to Admin"), use_container_width=True):
                     if sub_file is not None and sub_title.strip():
                         f_bytes = sub_file.getvalue()
                         conn = get_connection()
@@ -1271,13 +1687,13 @@ else:
                              sub_file.name, f_bytes))
                         conn.commit()
                         conn.close()
-                        st.success("🎉 Admin এর কাছে পাঠানো হয়েছে!")
+                        st.success(T("🎉 Admin এর কাছে পাঠানো হয়েছে!", "🎉 Sent to Admin!"))
                         st.balloons()
                     else:
-                        st.warning("⚠️ Title ও File দিন।")
+                        st.warning(T("⚠️ Title ও File দিন।", "⚠️ Provide title & file."))
             
             st.markdown("---")
-            st.markdown("### 📬 আপনার Submitted Suggestions")
+            st.markdown(f"### 📬 {T('Your Submitted Suggestions', 'Your Submitted Suggestions')}")
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("""SELECT id, sub_type, title, status, admin_note, timestamp 
@@ -1286,17 +1702,17 @@ else:
             conn.close()
             
             if not my_subs:
-                st.info("এখনো কোনো submission নেই।")
+                st.info(T("এখনো কোনো submission নেই।", "No submissions yet."))
             else:
                 for t_id, stype, title, stat, note, ts in my_subs:
                     color = {"Published": "🟢", "Approved": "🟢", "Rejected": "🔴"}.get(stat, "🟡")
                     with st.expander(f"{color} #{t_id} — {stype} — {title} [{stat}]"):
-                        st.markdown(f"**Submitted:** {ts}")
+                        st.markdown(f"**{T('Submitted', 'Submitted')}:** {ts}")
                         if note:
-                            st.info(f"**Admin Note:** {note}")
+                            st.info(f"**{T('Admin Note', 'Admin Note')}:** {note}")
         
-        elif st_nav == "👨‍🏫 Student Track Records":
-            st.subheader("👨‍🏫 Student Track Records")
+        elif st_nav in [T("👨‍🏫 Student Track Records", "👨‍🏫 Student Track Records")]:
+            st.subheader(T("👨‍🏫 Student Track Records", "👨‍🏫 Student Track Records"))
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("""SELECT student_name, student_phone, school_name, district, exam_name, topic_name, score, total_questions, percentage, timestamp
@@ -1304,7 +1720,7 @@ else:
             scores = cursor.fetchall()
             conn.close()
             if not scores:
-                st.info("No records.")
+                st.info(T("No records.", "No records."))
             else:
                 df = pd.DataFrame(scores, columns=["Name", "Phone", "School", "District", "Exam", "Topic", "Score", "Total", "Pct", "Timestamp"])
                 st.dataframe(df, use_container_width=True)
@@ -1313,8 +1729,8 @@ else:
     # ADMIN PORTAL
     # ========================================================================
     elif active_view_role == "admin":
-        if st_nav == "🛡️ User Approvals":
-            st.subheader("🛡️ User Approvals")
+        if st_nav in [T("🛡️ User Approvals", "🛡️ User Approvals")]:
+            st.subheader(T("🛡️ User Approvals", "🛡️ User Approvals"))
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("""SELECT id, role, full_name, school_name, class_grade, phone, district, approved
@@ -1322,26 +1738,26 @@ else:
             all_u = cursor.fetchall()
             conn.close()
             if not all_u:
-                st.info("No users.")
+                st.info(T("No users.", "No users."))
             else:
                 df_u = pd.DataFrame(all_u, columns=["ID", "Role", "Name", "School", "Class", "Phone", "District", "Approved"])
                 st.dataframe(df_u, use_container_width=True)
-                sel_uid = st.number_input("User ID:", min_value=1, step=1, key="adm_uid")
+                sel_uid = st.number_input(T("User ID:", "User ID:"), min_value=1, step=1, key="adm_uid")
                 c1, c2 = st.columns(2)
-                if c1.button("✅ Approve", use_container_width=True, key="adm_approve_btn"):
+                if c1.button(T("✅ Approve", "✅ Approve"), use_container_width=True, key="adm_approve_btn"):
                     conn = get_connection(); cursor = conn.cursor()
                     cursor.execute("UPDATE users SET approved = 1 WHERE id = ?", (sel_uid,))
                     conn.commit(); conn.close()
                     st.success(f"Approved #{sel_uid}"); st.rerun()
-                if c2.button("🚫 Revoke", use_container_width=True, key="adm_revoke_btn"):
+                if c2.button(T("🚫 Revoke", "🚫 Revoke"), use_container_width=True, key="adm_revoke_btn"):
                     conn = get_connection(); cursor = conn.cursor()
                     cursor.execute("UPDATE users SET approved = 0 WHERE id = ?", (sel_uid,))
                     conn.commit(); conn.close()
                     st.warning(f"Revoked #{sel_uid}"); st.rerun()
         
-        elif st_nav == "❓ Student Doubt Assignment Hub":
-            st.subheader("❓ Student Doubt Assignment Hub")
-            st.info("💡 Student দের doubts এখানে দেখুন। Directly solve করুন অথবা Teacher কে assign করুন।")
+        elif st_nav in [T("❓ Student Doubt Assignment Hub", "❓ Student Doubt Assignment Hub")]:
+            st.subheader(T("❓ Student Doubt Assignment Hub", "❓ Student Doubt Assignment Hub"))
+            st.info(T("💡 Student দের doubts এখানে দেখুন। Directly solve করুন অথবা Teacher কে assign করুন।", "💡 View student doubts. Solve directly or assign to a teacher."))
             
             conn = get_connection()
             cursor = conn.cursor()
@@ -1358,7 +1774,7 @@ else:
             conn.close()
             
             if not doubts:
-                st.info("No doubts.")
+                st.info(T("No doubts.", "No doubts."))
             else:
                 pending_review = [d for d in doubts if d[6] == "Teacher Submitted (Pending Admin Approval)"]
                 pending_assign = [d for d in doubts if d[6] == "Pending Admin Assignment"]
@@ -1371,7 +1787,7 @@ else:
                 df_d = pd.DataFrame(doubts, columns=["ID", "Student", "Question", "Marks", "Assigned", "Answer", "Status", "Q_ID"])
                 st.dataframe(df_d[["ID", "Student", "Question", "Marks", "Assigned", "Status"]], use_container_width=True)
                 
-                sel_d_id = st.number_input("Doubt ID select করুন:", min_value=1, step=1, key="adm_did")
+                sel_d_id = st.number_input(T("Doubt ID select করুন:", "Select Doubt ID:"), min_value=1, step=1, key="adm_did")
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("""SELECT d.id, d.student_name, q.question_text, q.marks, d.assigned_teacher_username, d.teacher_answer, d.status
@@ -1387,43 +1803,43 @@ else:
                     st.markdown(f"**Question:** {q_txt}")
                     
                     if t_ans and t_ans.strip() and d_stat == "Teacher Submitted (Pending Admin Approval)":
-                        st.markdown("#### 📩 Teacher Submitted Solution — Review:")
-                        rev_ans = st.text_area("Review & Edit:", value=t_ans, height=180, key=f"rev_{d_id}")
+                        st.markdown(T("#### 📩 Teacher Submitted Solution — Review:", "#### 📩 Teacher Submitted Solution — Review:"))
+                        rev_ans = st.text_area(T("Review & Edit:", "Review & Edit:"), value=t_ans, height=180, key=f"rev_{d_id}")
                         colA, colB = st.columns(2)
-                        if colA.button("✅ Approve & Unlock for Student", key=f"appr_{d_id}", use_container_width=True):
+                        if colA.button(T("✅ Approve & Unlock for Student", "✅ Approve & Unlock for Student"), key=f"appr_{d_id}", use_container_width=True):
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("UPDATE student_doubts SET teacher_answer = ?, status = 'Approved' WHERE id = ?",
                                            (rev_ans.strip(), d_id))
                             conn.commit(); conn.close()
                             st.success("🎉 Approved!")
                             st.rerun()
-                        if colB.button("🔄 Send Back to Teacher", key=f"back_{d_id}", use_container_width=True):
+                        if colB.button(T("🔄 Send Back to Teacher", "🔄 Send Back to Teacher"), key=f"back_{d_id}", use_container_width=True):
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("""UPDATE student_doubts 
                                 SET status = 'Assigned to Teacher', teacher_answer = '' 
                                 WHERE id = ?""", (d_id,))
                             conn.commit(); conn.close()
-                            st.warning("Teacher কে ফেরত পাঠানো হয়েছে।")
+                            st.warning(T("Teacher কে ফেরত পাঠানো হয়েছে।", "Sent back to teacher."))
                             st.rerun()
                     elif d_stat == "Pending Admin Assignment":
-                        st.markdown("#### 🎯 Action নিন:")
+                        st.markdown(T("#### 🎯 Action নিন:", "#### 🎯 Take Action:"))
                         colA, colB = st.columns(2)
                         with colA:
-                            st.markdown("##### Option 1: Assign to Teacher")
+                            st.markdown(T("##### Option 1: Assign to Teacher", "##### Option 1: Assign to Teacher"))
                             if teacher_map:
-                                sel_t_lbl = st.selectbox("Teacher:", list(teacher_map.keys()), key=f"as_{d_id}")
-                                if st.button("Assign to Teacher", key=f"asb_{d_id}", use_container_width=True):
+                                sel_t_lbl = st.selectbox(T("Teacher:", "Teacher:"), list(teacher_map.keys()), key=f"as_{d_id}")
+                                if st.button(T("Assign to Teacher", "Assign to Teacher"), key=f"asb_{d_id}", use_container_width=True):
                                     conn = get_connection(); cursor = conn.cursor()
                                     cursor.execute("UPDATE student_doubts SET assigned_teacher_username = ?, status = 'Assigned to Teacher' WHERE id = ?",
                                                    (teacher_map[sel_t_lbl], d_id))
                                     conn.commit(); conn.close()
                                     st.success("Assigned!"); st.rerun()
                             else:
-                                st.caption("No approved teachers.")
+                                st.caption(T("No approved teachers.", "No approved teachers."))
                         with colB:
-                            st.markdown("##### Option 2: Solve Directly")
-                            direct_ans = st.text_area("Solution:", key=f"dir_{d_id}", height=140)
-                            if st.button("Solve & Approve", key=f"adap_{d_id}", use_container_width=True):
+                            st.markdown(T("##### Option 2: Solve Directly", "##### Option 2: Solve Directly"))
+                            direct_ans = st.text_area(T("Solution:", "Solution:"), key=f"dir_{d_id}", height=140)
+                            if st.button(T("Solve & Approve", "Solve & Approve"), key=f"adap_{d_id}", use_container_width=True):
                                 if direct_ans.strip():
                                     conn = get_connection(); cursor = conn.cursor()
                                     cursor.execute("UPDATE student_doubts SET teacher_answer = ?, status = 'Approved' WHERE id = ?",
@@ -1431,13 +1847,13 @@ else:
                                     conn.commit(); conn.close()
                                     st.success("Approved!"); st.rerun()
                     elif d_stat == "Approved":
-                        st.success("✅ Already approved.")
-                        st.markdown(f"**Solution:** {t_ans}")
+                        st.success(T("✅ Already approved.", "✅ Already approved."))
+                        st.markdown(f"**{T('Solution', 'Solution')}:** {t_ans}")
                     else:
                         st.info(f"Status: {d_stat}")
         
-        elif st_nav == "📖 Question Bank Manager":
-            st.subheader("📖 Question Bank Manager")
+        elif st_nav in [T("📖 Question Bank Manager", "📖 Question Bank Manager")]:
+            st.subheader(T("📖 Question Bank Manager", "📖 Question Bank Manager"))
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT id, name FROM topics ORDER BY id ASC")
@@ -1447,30 +1863,33 @@ else:
                 st.error("No chapters.")
                 st.stop()
             
-            sel_topic_name = st.selectbox("Chapter:", list(topic_dict.keys()), key="adm_top")
+            sel_topic_name = st.selectbox(T("Chapter:", "Chapter:"), list(topic_dict.keys()), key="adm_top")
             target_t_id = topic_dict[sel_topic_name]
             
             tab_ext, tab_man, tab_dups, tab_del = st.tabs([
-                "⚡ PDF/URL Extractor",
-                "➕ Manual Upload",
-                "🔍 Duplicate Remover",
-                "📖 Browse & Delete"
+                T("⚡ PDF/URL Extractor", "⚡ PDF/URL Extractor"),
+                T("➕ Manual Upload", "➕ Manual Upload"),
+                T("🔍 Duplicate Remover", "🔍 Duplicate Remover"),
+                T("📖 Browse & Delete", "📖 Browse & Delete")
             ])
             
             with tab_ext:
-                st.markdown("### 📤 Auto-Extract Engine")
-                st.warning("⚠️ PDF-এ Bengali font থাকলে extracted text ভাঙা আসবে। **Manual Text Paste** সবচেয়ে ভালো।")
-                source_type = st.radio("Source:", ["📄 Manual Text Paste (Best for Bengali)", "📁 PDF / DOCX File", "🌐 Website URL"], key="adm_src")
+                st.markdown(T("### 📤 Auto-Extract Engine", "### 📤 Auto-Extract Engine"))
+                st.warning(T("⚠️ PDF-এ Bengali font থাকলে extracted text ভাঙা আসবে। Manual Text Paste সবচেয়ে ভালো।", "⚠️ PDFs with Bengali fonts may extract incorrectly. Manual Text Paste is best."))
+                source_type = st.radio(T("Source:", "Source:"), [
+                    T("📄 Manual Text Paste (Best for Bengali)", "📄 Manual Text Paste (Best for Bengali)"),
+                    T("📁 PDF / DOCX File", "📁 PDF / DOCX File"),
+                    T("🌐 Website URL", "🌐 Website URL")
+                ], key="adm_src")
                 extracted_text = ""
                 
-                if source_type == "📄 Manual Text Paste (Best for Bengali)":
-                    st.info("PDF থেকে text select → Ctrl+C → এখানে Ctrl+V")
-                    manual_txt = st.text_area("Paste Here:", height=250, key="adm_manual_paste",
-                        placeholder="Q1. সর্বপ্রথম ভূবিজ্ঞান কে প্রতিষ্ঠা করেন?\n(ক) ...\n(খ) ...")
+                if "Manual" in source_type or "ম্যানুয়াল" in source_type:
+                    st.info(T("PDF থেকে text select → Ctrl+C → এখানে Ctrl+V", "Select text from PDF → Ctrl+C → Ctrl+V here"))
+                    manual_txt = st.text_area(T("Paste Here:", "Paste Here:"), height=250, key="adm_manual_paste")
                     if manual_txt.strip():
                         extracted_text = normalize_bengali_text(manual_txt)
-                elif source_type == "📁 PDF / DOCX File":
-                    file_obj = st.file_uploader("Upload", type=["pdf", "docx"], key="adm_upl")
+                elif "PDF" in source_type:
+                    file_obj = st.file_uploader(T("Upload", "Upload"), type=["pdf", "docx"], key="adm_upl")
                     if file_obj is not None:
                         ext = file_obj.name.split('.')[-1].lower()
                         if ext == "pdf":
@@ -1480,8 +1899,8 @@ else:
                             raw = "\n".join([p.text for p in doc_file.paragraphs if p.text.strip()])
                             extracted_text = normalize_bengali_text(raw)
                 else:
-                    web_url = st.text_input("URL:", key="adm_url")
-                    if st.button("🌐 Fetch", key="adm_fetch_url_btn"):
+                    web_url = st.text_input(T("URL:", "URL:"), key="adm_url")
+                    if st.button(T("🌐 Fetch", "🌐 Fetch"), key="adm_fetch_url_btn"):
                         if web_url.strip():
                             try:
                                 req = urllib.request.Request(web_url.strip(), headers={'User-Agent': 'Mozilla/5.0'})
@@ -1494,10 +1913,10 @@ else:
                                 st.error(f"Error: {e}")
                 
                 if extracted_text:
-                    st.markdown("#### 📝 Preview (Editable):")
-                    edited = st.text_area("Review:", value=extracted_text, height=200, key="adm_edit")
+                    st.markdown(T("#### 📝 Preview (Editable):", "#### 📝 Preview (Editable):"))
+                    edited = st.text_area(T("Review:", "Review:"), value=extracted_text, height=200, key="adm_edit")
                     parsed = parse_and_categorize_questions(edited)
-                    st.success(f"Extracted {len(parsed)} questions!")
+                    st.success(f"{T('Extracted', 'Extracted')} {len(parsed)} questions!")
                     m1 = [q for q in parsed if q["marks"] == 1]
                     m2 = [q for q in parsed if q["marks"] == 2]
                     m3 = [q for q in parsed if q["marks"] == 3]
@@ -1511,66 +1930,66 @@ else:
                         if m3: st.dataframe(pd.DataFrame(m3), use_container_width=True)
                     with f5:
                         if m5: st.dataframe(pd.DataFrame(m5), use_container_width=True)
-                    if st.button("🚀 Save All", key="adm_save_all"):
+                    if st.button(T("🚀 Save All", "🚀 Save All"), key="adm_save_all"):
                         conn = get_connection(); cursor = conn.cursor()
                         saved = 0
                         for q in parsed:
                             q_bn = q["question"]
                             q_en = translate_geo_term(q_bn, "English")
-                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, model_answer, marking_scheme)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', ?, ?, ?, ?)""",
+                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', ?, ?, ?, ?, 'MCQ' if ? = 1 else 'Broad')""",
                                 (target_t_id, q_bn, q_en, q["opt_a"], q["opt_b"], q["opt_c"], q["opt_d"],
                                  q["correct"], q["explanation"], q["is_descriptive"], q["marks"],
-                                 q_bn if q["is_descriptive"] else "", f"{q['marks']}M Scheme"))
+                                 q_bn if q["is_descriptive"] else "", f"{q['marks']}M Scheme", q["marks"]))
                             saved += 1
                         conn.commit(); conn.close()
                         st.success(f"Saved {saved} questions!")
                         st.rerun()
             
             with tab_man:
-                st.markdown("### ➕ Manual Upload")
-                q_text_bn = st.text_area("Question:", key="adm_q_bn")
-                q_marks = st.selectbox("Marks:", [1, 2, 3, 5], key="adm_q_m")
+                st.markdown(T("### ➕ Manual Upload", "### ➕ Manual Upload"))
+                q_text_bn = st.text_area(T("Question:", "Question:"), key="adm_q_bn")
+                q_marks = st.selectbox(T("Marks:", "Marks:"), [1, 2, 3, 5], key="adm_q_m")
                 if q_text_bn.strip():
                     match, ratio = check_duplicate_question(q_text_bn, target_t_id)
                     if match:
-                        st.warning(f"⚠️ Duplicate ({ratio*100:.1f}%): Q_ID #{match[0]}")
+                        st.warning(f"⚠️ {T('Duplicate', 'Duplicate')} ({ratio*100:.1f}%): Q_ID #{match[0]}")
                 if q_marks == 1:
                     c1, c2 = st.columns(2)
                     oa = c1.text_input("A:", key="adm_oa")
                     ob = c2.text_input("B:", key="adm_ob")
                     oc = c1.text_input("C:", key="adm_oc")
                     od = c2.text_input("D:", key="adm_od")
-                    co = st.selectbox("Correct:", ["A", "B", "C", "D"], key="adm_co2")
-                    ex = st.text_area("Explanation:", key="adm_ex2")
-                    if st.button("Save MCQ", key="adm_save_mcq2"):
+                    co = st.selectbox(T("Correct:", "Correct:"), ["A", "B", "C", "D"], key="adm_co2")
+                    ex = st.text_area(T("Explanation:", "Explanation:"), key="adm_ex2")
+                    if st.button(T("Save MCQ", "Save MCQ"), key="adm_save_mcq2"):
                         if q_text_bn and oa:
                             conn = get_connection(); cursor = conn.cursor()
-                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', 0, 1)""",
+                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, option_a, option_b, option_c, option_d, correct_option, explanation, difficulty, is_descriptive, marks, q_type)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Medium', 0, 1, 'MCQ')""",
                                 (target_t_id, q_text_bn, translate_geo_term(q_text_bn, "English"), oa, ob, oc, od, co, ex))
                             conn.commit(); conn.close()
                             st.success("Added!"); st.rerun()
                 else:
-                    ma = st.text_area(f"Model Answer ({q_marks}M):", key="adm_ma2")
-                    ms = st.text_area("Marking Scheme:", key="adm_ms2")
-                    if st.button(f"Save {q_marks}M Question", key="adm_save_b"):
+                    ma = st.text_area(T(f"Model Answer ({q_marks}M):", f"Model Answer ({q_marks}M):"), key="adm_ma2")
+                    ms = st.text_area(T("Marking Scheme:", "Marking Scheme:"), key="adm_ms2")
+                    if st.button(T(f"Save {q_marks}M Question", f"Save {q_marks}M Question"), key="adm_save_b"):
                         if q_text_bn:
                             conn = get_connection(); cursor = conn.cursor()
-                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, marking_scheme)
-                                VALUES (?, ?, ?, 'Hard', 1, ?, ?, ?)""",
+                            cursor.execute("""INSERT INTO questions (topic_id, question_text, question_text_en, difficulty, is_descriptive, marks, model_answer, marking_scheme, q_type)
+                                VALUES (?, ?, ?, 'Hard', 1, ?, ?, ?, 'Broad')""",
                                 (target_t_id, q_text_bn, translate_geo_term(q_text_bn, "English"), q_marks, ma, ms))
                             conn.commit(); conn.close()
                             st.success("Added!"); st.rerun()
             
             with tab_dups:
-                st.markdown("### 🔍 Duplicate Remover (75%+ similarity)")
-                if st.button("🔍 Scan Chapter", key="adm_scan"):
+                st.markdown(T("### 🔍 Duplicate Remover (75%+ similarity)", "### 🔍 Duplicate Remover (75%+ similarity)"))
+                if st.button(T("🔍 Scan Chapter", "🔍 Scan Chapter"), key="adm_scan"):
                     conn = get_connection(); cursor = conn.cursor()
                     cursor.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = ? ORDER BY id ASC", (target_t_id,))
                     all_q = cursor.fetchall(); conn.close()
                     if len(all_q) < 2:
-                        st.warning("২টি প্রশ্ন লাগবে।")
+                        st.warning(T("২টি প্রশ্ন লাগবে।", "Need at least 2 questions."))
                     else:
                         import difflib
                         groups = []; processed = set()
@@ -1586,12 +2005,12 @@ else:
                             if len(grp) > 1:
                                 processed.add(all_q[i][0]); groups.append(grp)
                         if not groups:
-                            st.success("🎉 No duplicates!")
+                            st.success(T("🎉 No duplicates!", "🎉 No duplicates!"))
                         else:
                             st.warning(f"⚠️ {len(groups)} Groups!")
                             for gi, grp in enumerate(groups, 1):
                                 st.markdown(f"#### Group #{gi}")
-                                keep = st.radio(f"Keep?", [q[0] for q in grp],
+                                keep = st.radio(T("Keep?", "Keep?"), [q[0] for q in grp],
                                     format_func=lambda x: next(f"#{q[0]} [{q[2]}M]: {q[1][:80]}" for q in grp if q[0] == x),
                                     key=f"k_{gi}_adm")
                                 for q in grp:
@@ -1613,7 +2032,7 @@ else:
                 cursor.execute("SELECT id, question_text, marks FROM questions WHERE topic_id = ? ORDER BY id DESC", (target_t_id,))
                 q_rows = cursor.fetchall(); conn.close()
                 if not q_rows:
-                    st.info("No questions.")
+                    st.info(T("No questions.", "No questions."))
                 else:
                     for q_id, q_txt, q_m in q_rows:
                         c1, c2 = st.columns([5, 1])
@@ -1624,19 +2043,19 @@ else:
                             conn.commit(); conn.close()
                             st.rerun()
         
-        elif st_nav == "📄 Upload Mock Tests & Suggestions":
-            st.subheader("📄 Upload Mock Tests & Suggestions")
-            t_type = st.radio("Type:", ["Chapter Wise Mock Test", "Final Mock Test", "Board Suggestions"], horizontal=True, key="adm_mt")
+        elif st_nav in [T("📄 Upload Mock Tests & Suggestions", "📄 Upload Mock Tests & Suggestions")]:
+            st.subheader(T("📄 Upload Mock Tests & Suggestions", "📄 Upload Mock Tests & Suggestions"))
+            t_type = st.radio(T("Type:", "Type:"), ["Chapter Wise Mock Test", "Final Mock Test", "Board Suggestions"], horizontal=True, key="adm_mt")
             default_price = {"Chapter Wise Mock Test": 19, "Final Mock Test": 49, "Board Suggestions": 69}[t_type]
-            price = st.number_input(f"Price (₹)", min_value=0, value=default_price, step=1, key="adm_mp")
+            price = st.number_input(T("Price (₹)", "Price (₹)"), min_value=0, value=default_price, step=1, key="adm_mp")
             conn = get_connection(); cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM mock_tests WHERE test_type = ?", (t_type,))
             cnt = cursor.fetchone()[0]; conn.close()
             prefix = "chapter mock" if t_type == "Chapter Wise Mock Test" else ("final mock" if t_type == "Final Mock Test" else "suggestion")
             auto_code = f"{prefix} - {cnt + 1:03d}"
             st.info(f"Code: `{auto_code}`")
-            up_file = st.file_uploader("Upload (.pdf / .docx)", type=["pdf", "docx"], key="adm_mu")
-            if st.button("🚀 Publish", key="adm_mpub"):
+            up_file = st.file_uploader(T("Upload (.pdf / .docx)", "Upload (.pdf / .docx)"), type=["pdf", "docx"], key="adm_mu")
+            if st.button(T("🚀 Publish", "🚀 Publish"), key="adm_mpub"):
                 if up_file:
                     f_bytes = up_file.getvalue()
                     conn = get_connection(); cursor = conn.cursor()
@@ -1645,26 +2064,9 @@ else:
                         (t_type, auto_code, up_file.name, f_bytes, st.session_state.full_name, price))
                     conn.commit(); conn.close()
                     st.success(f"Published `{auto_code}`!"); st.rerun()
-            
-            st.markdown("---")
-            st.markdown("### 📚 All Published Papers")
-            conn = get_connection(); cursor = conn.cursor()
-            cursor.execute("SELECT id, test_type, code_num, uploader, price, timestamp FROM mock_tests ORDER BY id DESC")
-            all_mocks = cursor.fetchall(); conn.close()
-            if all_mocks:
-                for m_id, mt, cn, up, pr, ts in all_mocks:
-                    colA, colB = st.columns([5, 1])
-                    colA.markdown(f"**#{m_id}** — `{cn}` — {mt} — ₹{pr or 0} — by {up} ({ts})")
-                    if colB.button(f"🗑️ #{m_id}", key=f"del_mock_{m_id}"):
-                        conn = get_connection(); cursor = conn.cursor()
-                        cursor.execute("DELETE FROM mock_tests WHERE id = ?", (m_id,))
-                        conn.commit(); conn.close()
-                        st.rerun()
         
-        elif st_nav == "📤 Teacher Submissions Review":
-            st.subheader("📤 Teacher Submissions Review")
-            st.info("💡 Teachers যেসব Mock Test/Suggestions পাঠিয়েছেন সেগুলো এখানে review করুন।")
-            
+        elif st_nav in [T("📤 Teacher Submissions Review", "📤 Teacher Submissions Review")]:
+            st.subheader(T("📤 Teacher Submissions Review", "📤 Teacher Submissions Review"))
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("""SELECT id, teacher_name, sub_type, title, description, file_name, file_data, status, admin_note, timestamp
@@ -1672,9 +2074,8 @@ else:
                 ORDER BY CASE WHEN status = 'Pending Admin Review' THEN 0 ELSE 1 END, id DESC""")
             t_subs = cursor.fetchall()
             conn.close()
-            
             if not t_subs:
-                st.info("No submissions yet.")
+                st.info(T("No submissions yet.", "No submissions yet."))
             else:
                 pending = [t for t in t_subs if t[7] == "Pending Admin Review"]
                 if pending:
@@ -1694,22 +2095,16 @@ else:
                         st.markdown(f"**Description:** {desc}")
                         st.markdown(f"**Submitted:** {ts}")
                         if fdata:
-                            st.download_button("📥 Download File", data=fdata, file_name=fname, key=f"dl_ts_{t_id}")
+                            st.download_button(T("📥 Download File", "📥 Download File"), data=fdata, file_name=fname, key=f"dl_ts_{t_id}")
                         
                         if stat == "Pending Admin Review":
-                            st.markdown("#### Review Action:")
-                            admin_note = st.text_input("Note to Teacher (optional):", key=f"tn_{t_id}")
-                            
-                            if stype == "Chapter Wise Mock Test":
-                                default_price = 19
-                            elif stype == "Final Mock Test":
-                                default_price = 49
-                            else:
-                                default_price = 69
-                            pub_price = st.number_input(f"Final Price (₹):", min_value=0, value=default_price, step=1, key=f"tp_{t_id}")
+                            st.markdown(T("#### Review Action:", "#### Review Action:"))
+                            admin_note = st.text_input(T("Note to Teacher (optional):", "Note to Teacher (optional):"), key=f"tn_{t_id}")
+                            default_price = {"Chapter Wise Mock Test": 19, "Final Mock Test": 49, "Board Suggestions": 69}.get(stype, 19)
+                            pub_price = st.number_input(T(f"Final Price (₹):", f"Final Price (₹):"), min_value=0, value=default_price, step=1, key=f"tp_{t_id}")
                             
                             colA, colB = st.columns(2)
-                            if colA.button("✅ Approve & Publish", key=f"ap_{t_id}", use_container_width=True):
+                            if colA.button(T("✅ Approve & Publish", "✅ Approve & Publish"), key=f"ap_{t_id}", use_container_width=True):
                                 conn = get_connection(); cursor = conn.cursor()
                                 cursor.execute("SELECT COUNT(*) FROM mock_tests WHERE test_type = ?", (stype,))
                                 cnt2 = cursor.fetchone()[0]
@@ -1726,7 +2121,7 @@ else:
                                 st.success(f"🎉 Published as `{auto_code}`!")
                                 st.balloons()
                                 st.rerun()
-                            if colB.button("❌ Reject", key=f"rj_{t_id}", use_container_width=True):
+                            if colB.button(T("❌ Reject", "❌ Reject"), key=f"rj_{t_id}", use_container_width=True):
                                 conn = get_connection(); cursor = conn.cursor()
                                 cursor.execute("UPDATE teacher_submissions SET status = 'Rejected', admin_note = ? WHERE id = ?",
                                                (admin_note.strip(), t_id))
@@ -1735,18 +2130,18 @@ else:
                                 st.rerun()
                         else:
                             if note:
-                                st.info(f"**Your Note:** {note}")
+                                st.info(f"**Note:** {note}")
                             if stat == "Published":
-                                st.success("✅ Published!")
+                                st.success(T("✅ Published!", "✅ Published!"))
         
-        elif st_nav == "💡 Ask Corner Suggestions":
-            st.subheader("💡 Ask Corner — Suggestions Hub")
+        elif st_nav in [T("💡 Ask Corner Suggestions", "💡 Ask Corner Suggestions")]:
+            st.subheader(T("💡 Ask Corner — Suggestions Hub", "💡 Ask Corner — Suggestions Hub"))
             conn = get_connection(); cursor = conn.cursor()
             cursor.execute("""SELECT id, submitter_name, submitter_role, category, message, admin_reply, status, timestamp
                 FROM ask_corner ORDER BY id DESC""")
             asks = cursor.fetchall(); conn.close()
             if not asks:
-                st.info("No suggestions.")
+                st.info(T("No suggestions.", "No suggestions."))
             else:
                 c1, c2, c3 = st.columns(3)
                 c1.metric("📨 Total", len(asks))
@@ -1758,35 +2153,35 @@ else:
                     st.markdown(f"""
                         <div class="ask-corner-card" style="border-left-color:{color};">
                         <span style="background:{color};color:white;padding:3px 8px;border-radius:5px;font-size:12px;font-weight:bold;">{stat}</span>
-                        <strong style="margin-left:10px;">#{a_id} — {cat}</strong><br/>
-                        <small>👤 {name} ({role_s}) — {ts}</small>
+                        <strong style="margin-left:10px;color:#0f172a !important;">#{a_id} — {cat}</strong><br/>
+                        <small style="color:#475569 !important;">👤 {name} ({role_s}) — {ts}</small>
                         </div>""", unsafe_allow_html=True)
                     st.markdown(f"**Message:** {msg}")
-                    reply_text = st.text_area(f"Reply #{a_id}:", value=rep, key=f"ar_{a_id}", height=100)
+                    reply_text = st.text_area(T(f"Reply #{a_id}:", f"Reply #{a_id}:"), value=rep, key=f"ar_{a_id}", height=100)
                     cA, cB = st.columns(2)
-                    if cA.button(f"📤 Send Reply", key=f"sr_{a_id}"):
+                    if cA.button(T("📤 Send Reply", "📤 Send Reply"), key=f"sr_{a_id}"):
                         conn = get_connection(); cursor = conn.cursor()
                         cursor.execute("UPDATE ask_corner SET admin_reply = ?, status = 'Replied' WHERE id = ?",
                                        (reply_text.strip(), a_id))
                         conn.commit(); conn.close()
-                        st.success(f"Reply sent!")
+                        st.success("Reply sent!")
                         st.rerun()
-                    if cB.button(f"🗑️ Delete", key=f"da_{a_id}"):
+                    if cB.button(T("🗑️ Delete", "🗑️ Delete"), key=f"da_{a_id}"):
                         conn = get_connection(); cursor = conn.cursor()
                         cursor.execute("DELETE FROM ask_corner WHERE id = ?", (a_id,))
                         conn.commit(); conn.close()
                         st.rerun()
                     st.markdown("---")
         
-        elif st_nav == "💳 Payment Verifications":
-            st.subheader("💳 Payment Verifications")
+        elif st_nav in [T("💳 Payment Verifications", "💳 Payment Verifications")]:
+            st.subheader(T("💳 Payment Verifications", "💳 Payment Verifications"))
             conn = get_connection(); cursor = conn.cursor()
             cursor.execute("""SELECT id, user_name, user_role, phone, item_type, item_id, amount, upi_ref, status, timestamp, admin_note
                 FROM payments ORDER BY CASE WHEN status='Pending Verification' THEN 0 ELSE 1 END, id DESC""")
             pays = cursor.fetchall(); conn.close()
             
             if not pays:
-                st.info("No payments.")
+                st.info(T("No payments.", "No payments."))
             else:
                 pending = [p for p in pays if p[8] == "Pending Verification"]
                 if pending:
@@ -1808,10 +2203,10 @@ else:
                             st.info(f"Note: {note}")
                         
                         if stat == "Pending Verification":
-                            st.markdown("#### ✅ আপনার UPI/Bank app এ verify করুন!")
-                            adm_note = st.text_input(f"Note:", key=f"pn_{p_id}")
+                            st.markdown(T("#### ✅ আপনার UPI/Bank app এ verify করুন!", "#### ✅ Verify in your UPI/Bank app!"))
+                            adm_note = st.text_input(T("Note:", "Note:"), key=f"pn_{p_id}")
                             cb1, cb2 = st.columns(2)
-                            if cb1.button(f"✅ Approve & Unlock", key=f"pa_{p_id}", use_container_width=True):
+                            if cb1.button(T("✅ Approve & Unlock", "✅ Approve & Unlock"), key=f"pa_{p_id}", use_container_width=True):
                                 conn = get_connection(); cursor = conn.cursor()
                                 cursor.execute("UPDATE payments SET status = 'Approved', approved_at = CURRENT_TIMESTAMP, admin_note = ? WHERE id = ?",
                                                (adm_note.strip(), p_id))
@@ -1822,7 +2217,7 @@ else:
                                 st.success(f"✅ Approved! Unlocked for {uname}")
                                 st.balloons()
                                 st.rerun()
-                            if cb2.button(f"❌ Reject", key=f"pr_{p_id}", use_container_width=True):
+                            if cb2.button(T("❌ Reject", "❌ Reject"), key=f"pr_{p_id}", use_container_width=True):
                                 conn = get_connection(); cursor = conn.cursor()
                                 cursor.execute("UPDATE payments SET status = 'Rejected', admin_note = ? WHERE id = ?",
                                                (adm_note.strip(), p_id))
@@ -1830,10 +2225,8 @@ else:
                                 st.warning(f"Rejected #{p_id}")
                                 st.rerun()
         
-        elif st_nav == "📝 Exam Answer Sheet Checking":
-            st.subheader("📝 Exam Answer Sheet Checking Hub")
-            st.info("💡 Student এর submitted খাতা এখানে দেখুন। Teacher কে assign করুন, অথবা নিজে check করে return করুন।")
-            
+        elif st_nav in [T("📝 Exam Answer Sheet Checking", "📝 Exam Answer Sheet Checking")]:
+            st.subheader(T("📝 Exam Answer Sheet Checking Hub", "📝 Exam Answer Sheet Checking Hub"))
             conn = get_connection(); cursor = conn.cursor()
             cursor.execute("""SELECT id, student_username, student_name, exam_code, answer_file_name, answer_file_data, 
                 submitted_at, checker_username, status, admin_note,
@@ -1846,7 +2239,7 @@ else:
             conn.close()
             
             if not subs:
-                st.info("No submissions.")
+                st.info(T("No submissions.", "No submissions."))
             else:
                 df = pd.DataFrame([(s[0], s[2], s[3], s[6], s[7] or "-", s[8]) for s in subs],
                                   columns=["ID", "Student", "Exam Code", "Submitted", "Checker", "Status"])
@@ -1867,17 +2260,17 @@ else:
                             st.info(f"Note: {note}")
                         
                         if afdata:
-                            st.download_button("📥 Download Student Answer Sheet", data=afdata, file_name=afname, key=f"adm_dl_{s_id}")
+                            st.download_button(T("📥 Download Student Answer Sheet", "📥 Download Student Answer Sheet"), data=afdata, file_name=afname, key=f"adm_dl_{s_id}")
                         
                         if stat == "Teacher Submitted for Admin Review" and tcfdata:
-                            st.success("📩 Teacher corrected copy submit করেছেন — Review:")
+                            st.success(T("📩 Teacher corrected copy submit করেছেন — Review:", "📩 Teacher submitted corrected copy — Review:"))
                             if tnote:
                                 st.markdown(f"**Teacher Note:** {tnote}")
-                            st.download_button("📥 Download Teacher's Corrected Copy", data=tcfdata, file_name=tcfname, key=f"dl_tc_{s_id}")
+                            st.download_button(T("📥 Download Teacher's Corrected Copy", "📥 Download Teacher's Corrected Copy"), data=tcfdata, file_name=tcfname, key=f"dl_tc_{s_id}")
                             
-                            final_note = st.text_input("Final Note to Student:", value=note, key=f"fn_{s_id}")
+                            final_note = st.text_input(T("Final Note to Student:", "Final Note to Student:"), value=note, key=f"fn_{s_id}")
                             colA, colB = st.columns(2)
-                            if colA.button("✅ Approve & Return to Student", key=f"appr_ret_{s_id}", use_container_width=True):
+                            if colA.button(T("✅ Approve & Return to Student", "✅ Approve & Return to Student"), key=f"appr_ret_{s_id}", use_container_width=True):
                                 conn = get_connection(); cursor = conn.cursor()
                                 cursor.execute("""UPDATE exam_submissions 
                                     SET corrected_file_name = ?, corrected_file_data = ?, 
@@ -1886,38 +2279,38 @@ else:
                                     WHERE id = ?""",
                                     (tcfname, tcfdata, final_note.strip(), s_id))
                                 conn.commit(); conn.close()
-                                st.success("🎉 Student কে corrected copy return করা হয়েছে!")
+                                st.success("🎉 Returned to Student!")
                                 st.rerun()
-                            if colB.button("🔄 Send Back to Teacher", key=f"back_t_{s_id}", use_container_width=True):
+                            if colB.button(T("🔄 Send Back to Teacher", "🔄 Send Back to Teacher"), key=f"back_t_{s_id}", use_container_width=True):
                                 conn = get_connection(); cursor = conn.cursor()
                                 cursor.execute("""UPDATE exam_submissions 
                                     SET status = 'Under Check', teacher_corrected_file_name = '', teacher_corrected_file_data = NULL
                                     WHERE id = ?""", (s_id,))
                                 conn.commit(); conn.close()
-                                st.warning("Teacher কে ফেরত পাঠানো হয়েছে!")
+                                st.warning("Sent back to teacher!")
                                 st.rerun()
                         
                         elif stat == "Submitted":
-                            st.markdown("#### 🎯 Action:")
+                            st.markdown(T("#### 🎯 Action:", "#### 🎯 Action:"))
                             colA, colB = st.columns(2)
                             with colA:
-                                st.markdown("##### Option 1: Assign to Teacher")
+                                st.markdown(T("##### Option 1: Assign to Teacher", "##### Option 1: Assign to Teacher"))
                                 if teacher_map:
-                                    sel_t = st.selectbox("Teacher:", list(teacher_map.keys()), key=f"chk_sel_{s_id}")
-                                    if st.button("Assign Checker", key=f"asg_{s_id}", use_container_width=True):
+                                    sel_t = st.selectbox(T("Teacher:", "Teacher:"), list(teacher_map.keys()), key=f"chk_sel_{s_id}")
+                                    if st.button(T("Assign Checker", "Assign Checker"), key=f"asg_{s_id}", use_container_width=True):
                                         conn = get_connection(); cursor = conn.cursor()
                                         cursor.execute("UPDATE exam_submissions SET checker_username = ?, status = 'Under Check' WHERE id = ?",
                                                        (teacher_map[sel_t], s_id))
                                         conn.commit(); conn.close()
                                         st.success("Assigned!"); st.rerun()
                                 else:
-                                    st.caption("No approved teachers.")
+                                    st.caption(T("No approved teachers.", "No approved teachers."))
                             with colB:
-                                st.markdown("##### Option 2: Check Directly")
-                                corr_file = st.file_uploader("Corrected Copy (.pdf/.jpg/.png)", 
+                                st.markdown(T("##### Option 2: Check Directly", "##### Option 2: Check Directly"))
+                                corr_file = st.file_uploader(T("Corrected Copy (.pdf/.jpg/.png)", "Corrected Copy (.pdf/.jpg/.png)"), 
                                                              type=["pdf", "jpg", "jpeg", "png"], key=f"adm_corr_{s_id}")
-                                adm_n = st.text_input("Note to Student:", key=f"adm_n_{s_id}")
-                                if st.button("✅ Upload & Return to Student", key=f"adm_up_{s_id}", use_container_width=True):
+                                adm_n = st.text_input(T("Note to Student:", "Note to Student:"), key=f"adm_n_{s_id}")
+                                if st.button(T("✅ Upload & Return to Student", "✅ Upload & Return to Student"), key=f"adm_up_{s_id}", use_container_width=True):
                                     if corr_file:
                                         cf_bytes = corr_file.getvalue()
                                         conn = get_connection(); cursor = conn.cursor()
@@ -1931,44 +2324,44 @@ else:
                                         st.success("🎉 Returned to Student!")
                                         st.rerun()
                                     else:
-                                        st.warning("⚠️ File upload করুন।")
+                                        st.warning(T("⚠️ File upload করুন।", "⚠️ Upload a file."))
                         
                         elif stat == "Under Check":
                             st.info(f"⏳ Teacher `{checker}` এর কাছে under check।")
-                            if st.button("🔄 Reclaim & Check Directly", key=f"reclaim_{s_id}"):
+                            if st.button(T("🔄 Reclaim & Check Directly", "🔄 Reclaim & Check Directly"), key=f"reclaim_{s_id}"):
                                 conn = get_connection(); cursor = conn.cursor()
                                 cursor.execute("UPDATE exam_submissions SET status = 'Submitted', checker_username = '' WHERE id = ?", (s_id,))
                                 conn.commit(); conn.close()
                                 st.rerun()
                         
                         elif stat == "Checked & Returned":
-                            st.success("✅ Already returned to student.")
+                            st.success(T("✅ Already returned to student.", "✅ Already returned to student."))
                             if tcfdata:
-                                st.download_button("📥 View Corrected Copy", data=tcfdata, file_name=tcfname or "corrected", key=f"view_ret_{s_id}")
+                                st.download_button(T("📥 View Corrected Copy", "📥 View Corrected Copy"), data=tcfdata, file_name=tcfname or "corrected", key=f"view_ret_{s_id}")
                         
-                        if st.button(f"🗑️ Delete Submission", key=f"ds_{s_id}"):
+                        if st.button(T(f"🗑️ Delete Submission", f"🗑️ Delete Submission"), key=f"ds_{s_id}"):
                             conn = get_connection(); cursor = conn.cursor()
                             cursor.execute("DELETE FROM exam_submissions WHERE id = ?", (s_id,))
                             conn.commit(); conn.close()
                             st.rerun()
         
-        elif st_nav == "📊 Analytics & Track Records":
-            st.subheader("📊 Analytics & Student Track Records")
+        elif st_nav in [T("📊 Analytics & Track Records", "📊 Analytics & Track Records")]:
+            st.subheader(T("📊 Analytics & Student Track Records", "📊 Analytics & Student Track Records"))
             conn = get_connection(); cursor = conn.cursor()
             cursor.execute("""SELECT student_name, student_phone, school_name, district, exam_name, topic_name, score, total_questions, percentage, timestamp
                 FROM student_scores ORDER BY timestamp DESC""")
             scores = cursor.fetchall(); conn.close()
             if not scores:
-                st.info("No records.")
+                st.info(T("No records.", "No records."))
             else:
                 df = pd.DataFrame(scores, columns=["Name", "Phone", "School", "District", "Exam", "Topic", "Score", "Total", "Pct", "Timestamp"])
                 st.dataframe(df, use_container_width=True)
 
 st.markdown("""
     <div class="footer-block">
-        <h3 style="margin-bottom: 5px; color: #38bdf8;">Prepared by - Shawon Kar, Sukannya Chakraborty</h3>
-        <p style="margin: 3px 0; font-size: 1.1em; font-weight: 500;">M.Sc. in Geography (University Of Calcutta)</p>
-        <p style="margin: 3px 0; font-size: 1.0em; color: #94a3b8;">B.Ed. (Baba Saheb Ambedkar Education University)</p>
-        <p style="margin: 10px 0 0 0; font-weight: bold; color: #38bdf8; font-size: 1.2em;">📞 Ph No - 7001257277</p>
+        <h3 style="margin-bottom: 5px; color: #38bdf8 !important;">Prepared by - Shawon Kar, Sukannya Chakraborty</h3>
+        <p style="margin: 3px 0; font-size: 1.1em; font-weight: 500; color: #f8fafc !important;">M.Sc. in Geography (University Of Calcutta)</p>
+        <p style="margin: 3px 0; font-size: 1.0em; color: #94a3b8 !important;">B.Ed. (Baba Saheb Ambedkar Education University)</p>
+        <p style="margin: 10px 0 0 0; font-weight: bold; color: #38bdf8 !important; font-size: 1.2em;">📞 Ph No - 7001257277</p>
     </div>
 """, unsafe_allow_html=True)
